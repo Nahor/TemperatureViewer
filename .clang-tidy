@@ -1,0 +1,29 @@
+# cppcoreguidelines-avoid-c-arrays is redundant with modernize-avoid-c-arrays
+
+Checks: >
+    clang-diagnostic-*,
+    clang-analyzer-*,
+    bugprone-*,
+    concurrency-*,
+    cppcoreguidelines-*,
+    google-*,
+    misc-*,
+    modernize-*,
+    performance-*,
+    portability-*,
+    readability-*,
+
+    -cppcoreguidelines-avoid-c-arrays,
+    -cppcoreguidelines-avoid-magic-numbers,
+    -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+    -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+    -cppcoreguidelines-pro-type-union-access,
+    -cppcoreguidelines-pro-type-vararg,
+    -misc-non-private-member-variables-in-classes,
+    -modernize-use-nodiscard,
+    -modernize-use-trailing-return-type,
+    -readability-convert-member-functions-to-static,
+    -readability-identifier-length,
+    -readability-magic-numbers,
+    -readability-redundant-access-specifiers,
+    -readability-uppercase-literal-suffix
