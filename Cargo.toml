@@ -1,0 +1,45 @@
+[package]
+name = "sensor"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["rayon"]
+humidity = []
+rayon = ["dep:rayon"] # Parallel iterators
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.31"
+chrono-tz = "0.8.4"
+egui = "0.24.1"
+egui_tiles = "0.4.0"
+rayon = { version = "1.8.0", optional = true }
+[dependencies.eframe]
+version = "0.24.1"
+default-features = false
+features = [
+    #"accesskit",     # Make egui comptaible with screen readers. NOTE: adds a lot of dependencies.
+    "default_fonts", # Embed the default egui fonts.
+    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
+    "persistence",   # Enable restoring app state when restarting the app.
+]
+[dependencies.env_logger]
+version = "0.10"
+default-features = false
+features = ["auto-color", "humantime"]
+
+
+## Optimize all dependencies even in debug builds:
+#[profile.dev.package."*"]
+#opt-level = 2
+
+
+# If you want to use the bleeding edge version of egui and eframe:
+# egui = { git = "https://github.com/emilk/egui", branch = "master" }
+# eframe = { git = "https://github.com/emilk/egui", branch = "master" }
+
+# If you fork https://github.com/emilk/egui you can test with:
+# egui = { path = "../egui/crates/egui" }
+# eframe = { path = "../egui/crates/eframe" }
