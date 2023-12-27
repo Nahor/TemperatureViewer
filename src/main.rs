@@ -1,4 +1,4 @@
-// spell-checker:words chrono datetime eframe egui
+// spell-checker:words chrono datetime eframe egui nahor
 //#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use eframe::egui;

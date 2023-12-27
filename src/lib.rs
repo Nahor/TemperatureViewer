@@ -8,7 +8,7 @@ pub use error::SensorError;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use std::{fs, str::FromStr};
+use std::{cmp, fmt::Display, fs, str::FromStr};
 
 pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
     let start = std::time::Instant::now();
@@ -19,9 +19,9 @@ pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
         return Err(SensorError::from("File empty"));
     }
 
-    let pos = content
+    let pos = content[0..cmp::min(60, content.len())] // No need to search to whole file, the header is not long
         .find('\n')
-        .ok_or(SensorError::from("No data in file"))?;
+        .ok_or(SensorError::from("No data"))?;
     let as_celsius = parse_header(&content[..pos])?;
 
     // TODO(nahor): how to get the timezone from Windows?
@@ -42,35 +42,43 @@ pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
 
     // First pass parses the strings using the data as-is (i.e. pretending it's UTC)
     let data = first_pass(content, pos + 1, as_celsius)?;
-    let mid = std::time::Instant::now();
+    let mid1 = std::time::Instant::now();
     // Second pass converts the date from "fake UTC" to "real UTC" (UTC + TZ)
     let data = second_pass(data, tz)?;
+    let mid2 = std::time::Instant::now();
+    // Third pass check for date continuity (data at 1min interval)
+    let data = third_pass(data)?;
 
     let end = std::time::Instant::now();
 
     // Statistics
-    {
-        let start = std::time::Instant::now();
-        #[cfg(feature = "rayon")]
-        let _data: Vec<_> = data.par_iter().map(|d| d.clone()).collect();
-        #[cfg(not(feature = "rayon"))]
-        let data: Vec<_> = data.iter().map(|d| d.clone()).collect();
-        let end = std::time::Instant::now();
-        println!(
-            "    (Empty pass: {:.3?} ({:.0} lines/sec))",
-            (end - start),
-            data.len() as f32 / (end - start).as_secs_f32()
-        );
-    }
+    // {
+    //     let start = std::time::Instant::now();
+    //     #[cfg(feature = "rayon")]
+    //     let _data: Vec<_> = data.par_iter().map(|d| d.clone()).collect();
+    //     #[cfg(not(feature = "rayon"))]
+    //     let data: Vec<_> = data.iter().map(|d| d.clone()).collect();
+    //     let end = std::time::Instant::now();
+    //     println!(
+    //         "    (Empty pass: {:.3?} ({:.0} lines/sec))",
+    //         (end - start),
+    //         data.len() as f32 / (end - start).as_secs_f32()
+    //     );
+    // }
     println!(
         "    First pass: {:.3?} ({:.0} lines/sec)",
-        (mid - start),
-        data.len() as f32 / (mid - start).as_secs_f32()
+        (mid1 - start),
+        data.len() as f32 / (mid1 - start).as_secs_f32()
     );
     println!(
         "    Second pass: {:.3?} ({:.0} lines/sec)",
-        (end - mid),
-        data.len() as f32 / (end - mid).as_secs_f32()
+        (mid2 - mid1),
+        data.len() as f32 / (mid2 - mid1).as_secs_f32()
+    );
+    println!(
+        "    Third pass: {:.3?} ({:.0} lines/sec)",
+        (end - mid2),
+        data.len() as f32 / (end - mid2).as_secs_f32()
     );
 
     println!(
@@ -89,7 +97,7 @@ fn parse_header(header: &str) -> Result<bool, SensorError> {
     } else if header == r#""Timestamp","Temperature (°F)","Relative Humidity (%)""# {
         Ok(false)
     } else {
-        Err(format!("Invalid header '{header}'").into())
+        Err(SensorError::from("invalid header"))
     }
 }
 
@@ -97,44 +105,51 @@ fn first_pass(
     content: String,
     pos: usize,
     as_celsius: bool,
-) -> Result<Vec<DataPoint>, SensorError> {
+) -> Result<Vec<(usize, DataPoint)>, SensorError> {
     // Seems faster to split first, and only then do the parsing
     // (possible reason: a search for a char is limited by the memory bandwidth
     // and by doing it separately, we avoid trashing the cache?)
     #[cfg(feature = "rayon")]
-    let lines: Vec<_> = content[pos..].par_split('\n').collect();
+    let mut lines: Vec<_> = content[pos..].par_split('\n').collect();
+    #[cfg(not(feature = "rayon"))]
+    let mut lines: Vec<_> = content[pos..].split('\n').collect();
+
+    if let Some(str) = lines.last() {
+        if str.is_empty() {
+            lines.pop();
+        }
+    }
+    if lines.is_empty() {
+        return Err(SensorError::from("No data"));
+    }
+
     #[cfg(feature = "rayon")]
     let iter = lines.into_par_iter();
-    #[cfg(not(feature = "rayon"))]
-    let lines: Vec<_> = content[pos..].split('\n').collect();
     #[cfg(not(feature = "rayon"))]
     let iter = lines.into_iter();
 
     iter.map(|line| parse_line(line, as_celsius))
-        // .enumerate()
-        // .filter_map(|(lineno, data)|
-        .filter_map(|data| {
-            let lineno = 0;
-            // Remove the `Option`, filtering the `None` cases
-            // Note that since filter_map expects an `Option` of its own, this
-            // is essentially change a `Result<Option<_>,_>` into a `Option<Result<_, _>>`
+        .enumerate()
+        .map(|(lineno, data)| {
             match data {
-                Ok(None) => None,
-                Ok(Some(data)) => Some(Ok(data.clone())),
-                // "+2" because of header+starting at 1
-                Err(err) => Some(Err(SensorError::from((
-                    format!("Failed to parse line {}", lineno + 2),
+                Ok(None) => Err(SensorError::from(format!(
+                    "Unexpected empty line {}",
+                    lineno + 2 // "+2" because of header+starting at 1
+                ))),
+                Ok(Some(data)) => Ok((lineno, data.clone())),
+                Err(err) => Err(SensorError::from((
+                    format!("failed to parse line {}", lineno + 2), // "+2" because of header+starting at 1
                     err,
-                )))),
+                ))),
             }
         })
         .collect()
 }
 
 fn second_pass(
-    data: Vec<DataPoint>,
-    tz: impl chrono::TimeZone + Sync,
-) -> Result<Vec<DataPoint>, SensorError> {
+    data: Vec<(usize, DataPoint)>,
+    tz: impl chrono::TimeZone + Sync + Display,
+) -> Result<Vec<(usize, DataPoint)>, SensorError> {
     // To resolve the ambiguous dates, combine the data points with one shifted
     // back by 1h, so we have date D and date D-1h. If D-1h is NOT ambiguous,
     // it means D in the first half of the ambiguous period (still in daylight
@@ -143,7 +158,7 @@ fn second_pass(
     //
     // To shift, we process/prepend 60 fake data points before chaining with
     // the real data.
-    let start_datetime = data[0].datetime.naive_utc();
+    let start_datetime = data[0].1.datetime.naive_utc();
     let extra_data: Vec<_> = (1..=60)
         .rev()
         .map(|i| DataPoint {
@@ -155,15 +170,19 @@ fn second_pass(
         .collect();
 
     #[cfg(feature = "rayon")]
-    let iter = data
-        .par_iter()
-        .zip(extra_data.par_iter().chain(data.par_iter()));
+    let iter = data.par_iter().zip(
+        extra_data
+            .par_iter()
+            .chain(data.par_iter().map(|(_, data)| data)),
+    );
     #[cfg(not(feature = "rayon"))]
     let iter = data.iter().zip(extra_data.iter().chain(data.iter()));
 
-    iter.map(|(&data, &data_ago)| {
+    iter.map(|(&(lineno, data), &data_ago)| {
         let datetime = match tz.from_local_datetime(&data.datetime.naive_utc()) {
-            chrono::LocalResult::None => Err(SensorError::from("Failed to convert date")),
+            chrono::LocalResult::None => Err(SensorError::from(format!(
+                "failed to convert date from {tz} to Utc"
+            ))),
             chrono::LocalResult::Single(date) => Ok(date),
             chrono::LocalResult::Ambiguous(min, max) => {
                 // If it wasn't for the parallel processing, we could just
@@ -174,16 +193,69 @@ fn second_pass(
                 // ~8760h/y), ... so yeah, no worth the trouble
                 let datetime_ago = tz.from_local_datetime(&data_ago.datetime.naive_utc());
                 match datetime_ago {
-                    chrono::LocalResult::None => Err(SensorError::from("Failed to convert date")),
+                    // If `data.datetime` is ambiguous, we are switching from
+                    // DST to STD. If so, date_ago can't be switching from STD
+                    // to DST, unless we have a huge gap in the original data.
+                    // So for now, just use the DST time, and we'll sort it out
+                    // when checking for date continuity
+                    chrono::LocalResult::None => Ok(min),
                     chrono::LocalResult::Single(_) => Ok(min),
                     chrono::LocalResult::Ambiguous(_, _) => Ok(max),
                 }
             }
-        }?;
-        Ok::<DataPoint, SensorError>(DataPoint {
-            datetime: datetime.with_timezone(&chrono::Utc),
-            ..data
+        }
+        .or_else(|err| {
+            Err(SensorError::from((
+                format!("failed to parse line {}", lineno + 2), // "+2" because of header+starting at 1
+                err,
+            )))
+        })?;
+        Ok::<(usize, DataPoint), SensorError>((
+            lineno,
+            DataPoint {
+                datetime: datetime.with_timezone(&chrono::Utc),
+                ..data
+            },
+        ))
+    })
+    .collect()
+}
+
+fn third_pass(data: Vec<(usize, DataPoint)>) -> Result<Vec<DataPoint>, SensorError> {
+    let start_datetime = data[0].1.datetime.naive_utc();
+    let extra_data: Vec<_> = (1..=1)
+        .rev()
+        .map(|i| {
+            (
+                0,
+                DataPoint {
+                    datetime: (start_datetime - chrono::Duration::minutes(i)).and_utc(),
+                    temperature: Celsius::new(0.0),
+                    #[cfg(feature = "humidity")]
+                    humidity: 0.0,
+                },
+            )
         })
+        .collect();
+
+    #[cfg(feature = "rayon")]
+    let iter = data
+        .par_iter()
+        .zip(extra_data.par_iter().chain(data.par_iter()));
+    #[cfg(not(feature = "rayon"))]
+    let iter = data.iter().zip(extra_data.iter().chain(data.iter()));
+
+    iter.map(|(&(lineno, data), &(_, data_ago))| {
+        if (data.datetime.naive_utc() - data_ago.datetime.naive_utc())
+            == chrono::Duration::minutes(1)
+        {
+            Ok(data)
+        } else {
+            Err(SensorError::from(format!(
+                "missing data before line {}",
+                lineno + 2 // "+2" because of header+starting at 1
+            )))
+        }
     })
     .collect()
 }
@@ -203,7 +275,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
         .ok_or(SensorError::from("Missing temperature"))?
         .trim_matches('"')
         .parse()
-        .or_else(|err| Err(SensorError::from(("Invalid temperature", err))))?;
+        .or_else(|err| Err(SensorError::from(("invalid temperature", err))))?;
     let temperature = if as_celsius {
         Celsius::new(temperature)
     } else {
@@ -212,10 +284,10 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
     #[cfg(feature = "humidity")]
     let humidity = record
         .next()
-        .ok_or(SensorError::from("Missing humidity"))?
+        .ok_or(SensorError::from("missing humidity"))?
         .trim_matches('"')
         .parse()
-        .or_else(|err| Err(SensorError::from(("Missing humidity", err))))?;
+        .or_else(|err| Err(SensorError::from(("missing humidity", err))))?;
 
     Ok(Some(DataPoint {
         datetime,
@@ -227,7 +299,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
 
 fn parse_date(datetime_str: &str) -> Result<chrono::DateTime<chrono::Utc>, SensorError> {
     let datetime = chrono::NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M")
-        .or(Err(SensorError::from("Failed to parse date")))?;
+        .or_else(|err| Err(SensorError::from(("failed to parse date", err))))?;
     Ok(datetime.and_utc())
 }
 

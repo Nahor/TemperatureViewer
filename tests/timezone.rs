@@ -1,3 +1,5 @@
+// spell-checker:words chrono datetime nocapture
+
 use std::time::Duration;
 
 use chrono::TimeZone;
