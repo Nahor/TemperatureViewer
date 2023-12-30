@@ -2,32 +2,37 @@
 //#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use eframe::egui;
-#[cfg(all(feature = "rayon", feature = "humidity"))]
-use rayon::prelude::*;
 use sensor::SensorError;
 
 //impl std::error::Error for eframe::Error{};
 
 #[cfg(feature = "humidity")]
-fn save(data: &Vec<sensor::DataPoint>) {
-    #[cfg(feature = "rayon")]
-    let iter = data.par_iter();
-    #[cfg(not(feature = "rayon"))]
-    let iter = data.iter();
+fn save(data: &Vec<sensor::DataPoint>) -> std::io::Result<()> {
+    let mut file = std::io::BufWriter::with_capacity(
+        1024 * 1024,
+        std::fs::File::create(r#"C:\msys64\home\Nahor\Downloads\sense.csv"#)?,
+    );
 
-    let str: String = iter
-        .map(|&data| {
-            format!(
-                concat!(r#""{}","{:.04}","{:.04}""#, '\n'),
-                data.datetime
-                    .with_timezone(&chrono_tz::America::Los_Angeles)
-                    .format("%Y-%m-%d %H:%M"),
-                Into::<sensor::Fahrenheit>::into(data.temperature).value(),
-                data.humidity
-            )
-        })
-        .collect();
-    std::fs::write(r#"C:\msys64\home\Nahor\Downloads\sense.csv"#, str)?;
+    std::io::Write::write_all(
+        &mut file,
+        "\"Timestamp\",\"Temperature (°F)\",\"Relative Humidity (%)\"\n".as_bytes(),
+    )?;
+
+    // TODO(nahor): Parallelize (see gen_file)
+    let iter = data.iter();
+    iter.try_for_each(|&data| {
+        let s = format!(
+            concat!(r#""{}","{:.04}","{:.04}""#, '\n'),
+            chrono::DateTime::from_timestamp(data.timestamp, 0)
+                .unwrap()
+                .with_timezone(&chrono_tz::America::Los_Angeles)
+                .format("%Y-%m-%d %H:%M"),
+            Into::<sensor::Fahrenheit>::into(data.temperature).value(),
+            data.humidity
+        );
+        std::io::Write::write_all(&mut file, s.as_bytes())
+    })?;
+    std::io::Write::flush(&mut file)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(unused_variables)]
     let data = sensor::parse(file.as_str())?;
     #[cfg(feature = "humidity")]
-    save(data);
+    save(&data)?;
 
     // let options = eframe::NativeOptions {
     //     viewport: egui::ViewportBuilder::default()

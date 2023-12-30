@@ -35,7 +35,7 @@ impl From<Fahrenheit> for Celsius {
 
 #[derive(Copy, Clone, Debug)]
 pub struct DataPoint {
-    pub datetime: chrono::DateTime<chrono::Utc>,
+    pub timestamp: i64, // seconds since Unix epoch
     #[allow(unused)]
     pub temperature: Celsius,
     #[cfg(feature = "humidity")]

@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         .map(|i| {
                             let d = DateTime::from_timestamp(i as i64 * 60, 0).unwrap();
                             let d = d.with_timezone(&chrono_tz::America::Los_Angeles);
-                            d.format(concat!(r#""%Y-%m-%d %H:%M","20","20""#, "\n"))
+                            d.format(concat!(r#""%Y-%m-%d %H:%M","20.0000","20.0000""#, "\n"))
                                 .to_string()
                         })
                         .collect();
@@ -144,8 +144,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             draw((i * CHUNK_SIZE).min(count));
             file.write_all(value.as_bytes()).unwrap();
         });
-        draw(count);
         file.flush().unwrap();
+
+        draw(count);
+        println!("");
     });
 
     Ok(())

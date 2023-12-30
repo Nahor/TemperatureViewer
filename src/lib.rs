@@ -224,11 +224,11 @@ fn second_pass(
     //
     // To shift, we process/prepend 60 fake data points before chaining with
     // the real data.
-    let start_datetime = data[0].1.datetime.naive_utc();
+    let start_datetime = data[0].1.timestamp;
     let extra_data: Vec<_> = (1..=60)
         .rev()
         .map(|i| DataPoint {
-            datetime: (start_datetime - chrono::Duration::minutes(i)).and_utc(),
+            timestamp: start_datetime - i * 60,
             temperature: Celsius::new(0.0),
             #[cfg(feature = "humidity")]
             humidity: 0.0,
@@ -247,7 +247,10 @@ fn second_pass(
         .zip(extra_data.iter().chain(data.iter().map(|(_, data)| data)));
 
     iter.map(|(&(lineno, data), &data_ago)| {
-        let datetime = match tz.from_local_datetime(&data.datetime.naive_utc()) {
+        let datetime = match tz.from_local_datetime(
+            &chrono::NaiveDateTime::from_timestamp_opt(data.timestamp, 0)
+                .ok_or("Invalid timestamp")?,
+        ) {
             chrono::LocalResult::None => Err(SensorError::from(format!(
                 "failed to convert date from {tz} to Utc"
             ))),
@@ -259,7 +262,10 @@ fn second_pass(
                 // might be in another thread, and yet to be processed.
                 // Moreover, this only applies to 0.02% of the dates (2 out of
                 // ~8760h/y), ... so yeah, no worth the trouble
-                let datetime_ago = tz.from_local_datetime(&data_ago.datetime.naive_utc());
+                let datetime_ago = tz.from_local_datetime(
+                    &chrono::NaiveDateTime::from_timestamp_opt(data_ago.timestamp, 0)
+                        .ok_or("Invalid timestamp")?,
+                );
                 match datetime_ago {
                     // If `data.datetime` is ambiguous, we are switching from
                     // DST to STD. If so, date_ago can't be switching from STD
@@ -276,7 +282,7 @@ fn second_pass(
         Ok::<(usize, DataPoint), SensorError>((
             lineno,
             DataPoint {
-                datetime: datetime.with_timezone(&chrono::Utc),
+                timestamp: datetime.with_timezone(&chrono::Utc).timestamp(),
                 ..data
             },
         ))
@@ -285,33 +291,28 @@ fn second_pass(
 }
 
 fn third_pass(data: Vec<(usize, DataPoint)>) -> Result<Vec<DataPoint>, SensorError> {
-    let start_datetime = data[0].1.datetime.naive_utc();
+    let start_datetime = data[0].1.timestamp;
     let extra_data: Vec<_> = (1..=1)
         .rev()
-        .map(|i| {
-            (
-                0,
-                DataPoint {
-                    datetime: (start_datetime - chrono::Duration::minutes(i)).and_utc(),
-                    temperature: Celsius::new(0.0),
-                    #[cfg(feature = "humidity")]
-                    humidity: 0.0,
-                },
-            )
+        .map(|i| DataPoint {
+            timestamp: start_datetime - i * 60,
+            temperature: Celsius::new(0.0),
+            #[cfg(feature = "humidity")]
+            humidity: 0.0,
         })
         .collect();
 
     #[cfg(feature = "rayon")]
-    let iter = data
-        .par_iter()
-        .zip(extra_data.par_iter().chain(data.par_iter()));
+    let iter = data.par_iter().zip(
+        extra_data
+            .par_iter()
+            .chain(data.par_iter().map(|(_, data)| data)),
+    );
     #[cfg(not(feature = "rayon"))]
     let iter = data.iter().zip(extra_data.iter().chain(data.iter()));
 
-    iter.map(|(&(lineno, data), &(_, data_ago))| {
-        if (data.datetime.naive_utc() - data_ago.datetime.naive_utc())
-            == chrono::Duration::minutes(1)
-        {
+    iter.map(|(&(lineno, data), &data_ago)| {
+        if (data.timestamp - data_ago.timestamp) == 60 {
             Ok(data)
         } else {
             Err(SensorError::from(format!(
@@ -332,10 +333,11 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
     let datetime_str = record.next().expect("No first split");
     let datetime_str = datetime_str.trim_matches('"');
     let datetime = parse_date(datetime_str)?;
+    let timestamp = datetime.timestamp();
 
     let temperature = record
         .next()
-        .ok_or(SensorError::from("Missing temperature"))?
+        .ok_or(SensorError::from("missing temperature"))?
         .trim_matches('"')
         .parse()
         .or_else(|err| Err(SensorError::from_source("invalid temperature", err)))?;
@@ -350,10 +352,10 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
         .ok_or(SensorError::from("missing humidity"))?
         .trim_matches('"')
         .parse()
-        .or_else(|err| Err(SensorError::from(("missing humidity", err))))?;
+        .or_else(|err| Err(SensorError::from_source("missing humidity", err)))?;
 
     Ok(Some(DataPoint {
-        datetime,
+        timestamp,
         temperature,
         #[cfg(feature = "humidity")]
         humidity,
