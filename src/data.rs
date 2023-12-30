@@ -1,3 +1,5 @@
+// spell-checker:words chrono datetime
+
 #[derive(Copy, Clone, Debug)]
 pub struct Celsius(f64);
 impl Celsius {

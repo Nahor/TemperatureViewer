@@ -5,6 +5,7 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::io;
 use std::num::ParseFloatError;
+use std::str::Utf8Error;
 use std::sync::Arc;
 
 use chrono;
@@ -15,6 +16,11 @@ pub(crate) enum ErrorKind {
     Io(Arc<io::Error>),
     ParseFloatError(ParseFloatError),
     ParseChronoError(chrono::ParseError),
+    Utf8(Utf8Error),
+}
+
+pub trait FromSource<S: ToString, E: Error> {
+    fn from_source(desc: S, err: E) -> SensorError;
 }
 
 pub struct SensorError {
@@ -29,6 +35,7 @@ impl Error for SensorError {
             ErrorKind::Io(e) => Some(e),
             ErrorKind::ParseFloatError(e) => Some(e),
             ErrorKind::ParseChronoError(e) => Some(e),
+            ErrorKind::Utf8(e) => Some(e),
         }
     }
 }
@@ -44,6 +51,7 @@ impl std::fmt::Display for SensorError {
                 ErrorKind::Io(err) => err.to_string(),
                 ErrorKind::ParseFloatError(err) => err.to_string(),
                 ErrorKind::ParseChronoError(err) => err.to_string(),
+                ErrorKind::Utf8(err) => err.to_string(),
             },
         )
     }
@@ -63,6 +71,9 @@ impl std::fmt::Debug for SensorError {
                 se.field("source", &err);
             }
             ErrorKind::ParseChronoError(err) => {
+                se.field("source", &err);
+            }
+            ErrorKind::Utf8(err) => {
                 se.field("source", &err);
             }
         }
@@ -88,37 +99,46 @@ impl From<ParseFloatError> for SensorError {
     }
 }
 
-impl<S: ToString> From<(S, ParseFloatError)> for SensorError {
-    fn from((s, source): (S, ParseFloatError)) -> Self {
+impl<S: ToString> FromSource<S, ParseFloatError> for SensorError {
+    fn from_source(desc: S, source: ParseFloatError) -> SensorError {
         Self {
-            desc: Some(s.to_string()),
+            desc: Some(desc.to_string()),
             source: ErrorKind::ParseFloatError(source),
         }
     }
 }
 
-impl<S: ToString> From<(S, chrono::ParseError)> for SensorError {
-    fn from((s, source): (S, chrono::ParseError)) -> Self {
+impl<S: ToString> FromSource<S, chrono::ParseError> for SensorError {
+    fn from_source(desc: S, source: chrono::ParseError) -> SensorError {
         Self {
-            desc: Some(s.to_string()),
+            desc: Some(desc.to_string()),
             source: ErrorKind::ParseChronoError(source),
         }
     }
 }
 
-impl<S: ToString> From<(S, SensorError)> for SensorError {
-    fn from((s, source): (S, SensorError)) -> Self {
+impl<S: ToString> FromSource<S, Utf8Error> for SensorError {
+    fn from_source(desc: S, source: Utf8Error) -> SensorError {
         Self {
-            desc: Some(s.to_string() + ": " + &source.desc.unwrap_or("".to_string())),
+            desc: Some(desc.to_string()),
+            source: ErrorKind::Utf8(source),
+        }
+    }
+}
+
+impl<S: ToString> FromSource<S, SensorError> for SensorError {
+    fn from_source(desc: S, source: SensorError) -> SensorError {
+        Self {
+            desc: Some(desc.to_string() + ": " + &source.desc.unwrap_or("".to_string())),
             source: source.source,
         }
     }
 }
 
-impl<S: ToString> From<(S, &SensorError)> for SensorError {
-    fn from((s, source): (S, &SensorError)) -> Self {
+impl<S: ToString> FromSource<S, &SensorError> for SensorError {
+    fn from_source(desc: S, source: &SensorError) -> SensorError {
         Self {
-            desc: Some(s.to_string() + ": " + source.desc.as_ref().unwrap_or(&"".to_string())),
+            desc: Some(desc.to_string() + ": " + source.desc.as_ref().unwrap_or(&"".to_string())),
             source: source.source.clone(),
         }
     }

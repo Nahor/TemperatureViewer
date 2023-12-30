@@ -1,28 +1,95 @@
-// spell-checker:words chrono datetime eframe egui nahor
+// spell-checker:words chrono datetime Deque eframe egui memmap2 mmap nahor
 
 mod data;
 mod error;
 
 pub use data::*;
-pub use error::SensorError;
+pub use error::{FromSource, SensorError};
 
+#[cfg(feature = "mmap")]
+use memmap2::MmapOptions;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use std::{cmp, fmt::Display, fs, str::FromStr};
+use std::{collections::VecDeque, error::Error, fmt::Display, fs, str::FromStr};
+
+fn line_error<E: Error>(lineno: usize, err: E) -> SensorError
+where
+    SensorError: FromSource<String, E>,
+{
+    SensorError::from_source(format!("failed to parse line {}", lineno), err)
+}
+
+//////////////////////////////////////
+// mmap version
+#[cfg(feature = "mmap")]
+struct FileData {
+    mmap: memmap2::Mmap,
+}
+#[cfg(feature = "mmap")]
+impl FileData {
+    fn open(file: &str) -> Result<Self, SensorError> {
+        let file = fs::File::open(file)?;
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        Ok(Self { mmap })
+    }
+    #[cfg(feature = "rayon")]
+    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
+        let lines: VecDeque<_> = self.mmap.par_split(|&b| b == b'\n').collect();
+        let iter = lines.into_par_iter();
+        iter.enumerate().map(FileData::to_utf8).collect()
+    }
+    #[cfg(not(feature = "rayon"))]
+    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
+        let lines: VecDeque<_> = self.mmap.split(|&b| b == b'\n').collect();
+        let iter = lines.into_iter();
+        iter.enumerate().map(FileData::to_utf8).collect()
+    }
+
+    fn to_utf8<'a>((lineno, x): (usize, &'a [u8])) -> Result<&'a str, SensorError> {
+        std::str::from_utf8(x).or_else(
+            |err| Err(line_error(lineno + 1, err)), // "+1" to start at 1
+        )
+    }
+}
+
+//////////////////////////////////////
+// `read_to_string` version
+#[cfg(not(feature = "mmap"))]
+struct FileData {
+    content: String,
+}
+#[cfg(not(feature = "mmap"))]
+impl FileData {
+    fn open(file: &str) -> Result<Self, SensorError> {
+        Ok(Self {
+            content: fs::read_to_string(file)?,
+        })
+    }
+    #[cfg(feature = "rayon")]
+    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
+        Ok(self.content.par_split('\n').collect())
+    }
+    #[cfg(not(feature = "rayon"))]
+    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
+        Ok(self.content.split('\n').collect())
+    }
+}
 
 pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
     let start = std::time::Instant::now();
 
-    let content = fs::read_to_string(file)?;
-    if content.is_empty() {
-        println!("empty");
-        return Err(SensorError::from("File empty"));
-    }
+    let file = FileData::open(file)?;
+    let mut lines = file.vec()?;
 
-    let pos = content[0..cmp::min(60, content.len())] // No need to search to whole file, the header is not long
-        .find('\n')
-        .ok_or(SensorError::from("No data"))?;
-    let as_celsius = parse_header(&content[..pos])?;
+    let as_celsius = parse_header(lines.pop_front().ok_or(SensorError::from("File empty"))?)?;
+    if let Some(str) = lines.back() {
+        if str.is_empty() {
+            lines.pop_back();
+        }
+    }
+    if lines.is_empty() {
+        return Err(SensorError::from("No data"));
+    }
 
     // TODO(nahor): how to get the timezone from Windows?
     let tz = chrono_tz::Tz::from_str(&match std::env::var("TZ") {
@@ -41,7 +108,8 @@ pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
     let start = std::time::Instant::now();
 
     // First pass parses the strings using the data as-is (i.e. pretending it's UTC)
-    let data = first_pass(content, pos + 1, as_celsius)?;
+    //let data = first_pass(content, pos + 1, as_celsius)?;
+    let data = first_pass(lines, as_celsius)?;
     let mid1 = std::time::Instant::now();
     // Second pass converts the date from "fake UTC" to "real UTC" (UTC + TZ)
     let data = second_pass(data, tz)?;
@@ -102,26 +170,25 @@ fn parse_header(header: &str) -> Result<bool, SensorError> {
 }
 
 fn first_pass(
-    content: String,
-    pos: usize,
+    lines: VecDeque<&str>,
     as_celsius: bool,
 ) -> Result<Vec<(usize, DataPoint)>, SensorError> {
-    // Seems faster to split first, and only then do the parsing
-    // (possible reason: a search for a char is limited by the memory bandwidth
-    // and by doing it separately, we avoid trashing the cache?)
-    #[cfg(feature = "rayon")]
-    let mut lines: Vec<_> = content[pos..].par_split('\n').collect();
-    #[cfg(not(feature = "rayon"))]
-    let mut lines: Vec<_> = content[pos..].split('\n').collect();
+    // // Seems faster to split first, and only then do the parsing
+    // // (possible reason: a search for a char is limited by the memory bandwidth
+    // // and by doing it separately, we avoid trashing the cache?)
+    // #[cfg(feature = "rayon")]
+    // let mut lines: Vec<_> = content[pos..].par_split('\n').collect();
+    // #[cfg(not(feature = "rayon"))]
+    // let mut lines: Vec<_> = content[pos..].split('\n').collect();
 
-    if let Some(str) = lines.last() {
-        if str.is_empty() {
-            lines.pop();
-        }
-    }
-    if lines.is_empty() {
-        return Err(SensorError::from("No data"));
-    }
+    // if let Some(str) = lines.last() {
+    //     if str.is_empty() {
+    //         lines.pop();
+    //     }
+    // }
+    // if lines.is_empty() {
+    //     return Err(SensorError::from("No data"));
+    // }
 
     #[cfg(feature = "rayon")]
     let iter = lines.into_par_iter();
@@ -137,10 +204,9 @@ fn first_pass(
                     lineno + 2 // "+2" because of header+starting at 1
                 ))),
                 Ok(Some(data)) => Ok((lineno, data.clone())),
-                Err(err) => Err(SensorError::from((
-                    format!("failed to parse line {}", lineno + 2), // "+2" because of header+starting at 1
-                    err,
-                ))),
+                Err(err) => Err(
+                    line_error(lineno + 2, err), // "+2" because of header+starting at 1
+                ),
             }
         })
         .collect()
@@ -176,7 +242,9 @@ fn second_pass(
             .chain(data.par_iter().map(|(_, data)| data)),
     );
     #[cfg(not(feature = "rayon"))]
-    let iter = data.iter().zip(extra_data.iter().chain(data.iter()));
+    let iter = data
+        .iter()
+        .zip(extra_data.iter().chain(data.iter().map(|(_, data)| data)));
 
     iter.map(|(&(lineno, data), &data_ago)| {
         let datetime = match tz.from_local_datetime(&data.datetime.naive_utc()) {
@@ -204,12 +272,7 @@ fn second_pass(
                 }
             }
         }
-        .or_else(|err| {
-            Err(SensorError::from((
-                format!("failed to parse line {}", lineno + 2), // "+2" because of header+starting at 1
-                err,
-            )))
-        })?;
+        .or_else(|err| Err(line_error(lineno + 2, err)))?; // "+2" because of header+starting at 1
         Ok::<(usize, DataPoint), SensorError>((
             lineno,
             DataPoint {
@@ -275,7 +338,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
         .ok_or(SensorError::from("Missing temperature"))?
         .trim_matches('"')
         .parse()
-        .or_else(|err| Err(SensorError::from(("invalid temperature", err))))?;
+        .or_else(|err| Err(SensorError::from_source("invalid temperature", err)))?;
     let temperature = if as_celsius {
         Celsius::new(temperature)
     } else {
@@ -299,7 +362,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
 
 fn parse_date(datetime_str: &str) -> Result<chrono::DateTime<chrono::Utc>, SensorError> {
     let datetime = chrono::NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M")
-        .or_else(|err| Err(SensorError::from(("failed to parse date", err))))?;
+        .or_else(|err| Err(SensorError::from_source("failed to parse date", err)))?;
     Ok(datetime.and_utc())
 }
 
