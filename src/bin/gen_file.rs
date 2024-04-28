@@ -38,28 +38,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // closure to draw the progress
     let progress_chars: Vec<_> = "▏▎▍▌▋▊▉█".chars().collect();
+    const WIDTH: usize = 50;
+    let virtual_width = WIDTH * progress_chars.len();
     let mut last_update: Instant = Instant::now() - Duration::from_secs(1);
-    let mut progress = String::default();
+    let mut progress_str = String::default();
     let mut draw = |i| {
-        const COL_COUNT: usize = 50;
-        let bucket_count: usize = 50 * progress_chars.len();
+        let progress = i * virtual_width / count;
 
         // Generate the progress bar
-        let full_blocks = i * COL_COUNT / count;
-        let partial_block_idx = (i * bucket_count / count) % progress_chars.len() - 1;
+        let full_blocks = progress / progress_chars.len();
+        let partial_block_idx = progress % progress_chars.len();
         let mut vec: Vec<char> = vec![*progress_chars.last().unwrap(); full_blocks];
-        if let Some(c) = progress_chars.get(partial_block_idx) {
-            vec.push(*c);
+        if partial_block_idx > 0 {
+            vec.push(progress_chars[partial_block_idx - 1]);
         }
-        let new_progress: String = vec.iter().collect();
+        let new_progress_str: String = vec.iter().collect();
 
         // Skip the refresh if there is no visible progress and not enough time has passed
         let time = Instant::now();
-        if (time < last_update + Duration::from_millis(100)) && (new_progress == progress) {
+        if (time < last_update + Duration::from_millis(100)) && (new_progress_str == progress_str) {
             return;
         }
         last_update = time;
-        progress = new_progress;
+        progress_str = new_progress_str;
 
         // Estimate the speed
         // Do it only if we have enough data to mean something
@@ -82,10 +83,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
 
         print!(
-            "\r[{:>2}:{:02}] [{:░<50}] {:>3}% ({})",
+            //"\r[{:>2}:{:02}] [{:░<50}] {:>3}% ({})",
+            "\r[{:>2}:{:02}] [{: <50}] {:>3}% ({})",
             elapsed as usize / 60,
             elapsed as usize % 60,
-            progress,
+            progress_str,
             i * 100 / count,
             eta
         );
