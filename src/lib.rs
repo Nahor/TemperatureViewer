@@ -248,7 +248,8 @@ fn second_pass(
 
     iter.map(|(&(lineno, data), &data_ago)| {
         let datetime = match tz.from_local_datetime(
-            &chrono::NaiveDateTime::from_timestamp_opt(data.timestamp, 0)
+            &chrono::DateTime::from_timestamp(data.timestamp, 0)
+                .map(|d| d.naive_utc())
                 .ok_or("Invalid timestamp")?,
         ) {
             chrono::LocalResult::None => Err(SensorError::from(format!(
@@ -263,7 +264,8 @@ fn second_pass(
                 // Moreover, this only applies to 0.02% of the dates (2 out of
                 // ~8760h/y), ... so yeah, no worth the trouble
                 let datetime_ago = tz.from_local_datetime(
-                    &chrono::NaiveDateTime::from_timestamp_opt(data_ago.timestamp, 0)
+                    &chrono::DateTime::from_timestamp(data_ago.timestamp, 0)
+                        .map(|d| d.naive_utc())
                         .ok_or("Invalid timestamp")?,
                 );
                 match datetime_ago {

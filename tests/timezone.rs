@@ -27,7 +27,8 @@ fn test() {
         let iter = (0..100_000).into_iter();
         count += iter
             .map(|acc| {
-                let d = chrono::NaiveDateTime::from_timestamp_opt(acc, 0)
+                let d = chrono::DateTime::from_timestamp(acc, 0)
+                    .map(|d| d.naive_utc())
                     .unwrap_or_else(|| panic!("Failed with {acc}"));
                 chrono_tz::America::Los_Angeles.from_local_datetime(&d);
                 1
