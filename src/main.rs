@@ -1,7 +1,7 @@
 // spell-checker:words chrono datetime eframe egui nahor
 //#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use eframe::egui;
+// use eframe::egui;
 use sensor::SensorError;
 
 //impl std::error::Error for eframe::Error{};
@@ -36,11 +36,11 @@ fn save(data: &Vec<sensor::DataPoint>) -> std::io::Result<()> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    // env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let mut args = std::env::args();
     if args.len() != 2 {
-        return Err(SensorError::from("Not enough arguments"))?;
+        return Err(Box::new(SensorError::from("Not enough arguments")));
     }
     let file = args.nth(1).unwrap();
 
@@ -71,40 +71,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-struct MyApp {
-    name: String,
-    age: u32,
-}
+// struct MyApp {
+//     name: String,
+//     age: u32,
+// }
 
-impl Default for MyApp {
-    fn default() -> Self {
-        Self {
-            name: "Arthur".to_owned(),
-            age: 42,
-        }
-    }
-}
+// impl Default for MyApp {
+//     fn default() -> Self {
+//         Self {
+//             name: "Arthur".to_owned(),
+//             age: 42,
+//         }
+//     }
+// }
 
-impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("My egui Application");
-            ui.horizontal(|ui| {
-                let name_label = ui.label("Your name: ");
-                ui.text_edit_singleline(&mut self.name)
-                    .labelled_by(name_label.id);
-            });
-            ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
-            if ui.button("Click each year").clicked() {
-                self.age += 1;
-            }
-            ui.label(format!("Hello '{}', age {}", self.name, self.age));
+// impl eframe::App for MyApp {
+//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+//         egui::CentralPanel::default().show(ctx, |ui| {
+//             ui.heading("My egui Application");
+//             ui.horizontal(|ui| {
+//                 let name_label = ui.label("Your name: ");
+//                 ui.text_edit_singleline(&mut self.name)
+//                     .labelled_by(name_label.id);
+//             });
+//             ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
+//             if ui.button("Click each year").clicked() {
+//                 self.age += 1;
+//             }
+//             ui.label(format!("Hello '{}', age {}", self.name, self.age));
 
-            //egui::widgets::global_dark_light_mode_buttons(ui);
+//             //egui::widgets::global_dark_light_mode_buttons(ui);
 
-            // ui.image(egui::include_image!(
-            //     "../../../crates/egui/assets/ferris.png"
-            // ));
-        });
-    }
-}
+//             // ui.image(egui::include_image!(
+//             //     "../../../crates/egui/assets/ferris.png"
+//             // ));
+//         });
+//     }
+// }

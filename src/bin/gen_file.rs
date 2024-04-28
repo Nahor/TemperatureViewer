@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let progress_chars: Vec<_> = "▏▎▍▌▋▊▉█".chars().collect();
     let mut last_update: Instant = Instant::now() - Duration::from_secs(1);
     let mut progress = String::default();
-    let mut draw = |i| -> () {
+    let mut draw = |i| {
         const COL_COUNT: usize = 50;
         let bucket_count: usize = 50 * progress_chars.len();
 
@@ -114,7 +114,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let start = (i * CHUNK_SIZE).min(count);
                     let end = (start + CHUNK_SIZE).min(count);
                     let chunk: String = (start..end)
-                        .into_iter()
                         .map(|i| {
                             let d = DateTime::from_timestamp(i as i64 * 60, 0).unwrap();
                             let d = d.with_timezone(&chrono_tz::America::Los_Angeles);
@@ -147,17 +146,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         file.flush().unwrap();
 
         draw(count);
-        println!("");
+        println!();
     });
 
     Ok(())
 }
 
 fn receive<T>(rx: mpsc::Receiver<(usize, T)>, mut op: impl FnMut(usize, T)) {
-    let mut next_index: usize = 0;
-    for (i, value) in rx {
+    for (next_index, (i, value)) in rx.into_iter().enumerate() {
         assert_eq!(i, next_index, "Wrong index {i}, expected {next_index}");
         op(i, value);
-        next_index += 1;
     }
 }

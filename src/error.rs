@@ -1,14 +1,11 @@
 // spell-checker:words chrono
 
-use std;
 use std::error::Error;
 use std::fmt::Debug;
 use std::io;
 use std::num::ParseFloatError;
 use std::str::Utf8Error;
 use std::sync::Arc;
-
-use chrono;
 
 #[derive(Debug, Clone)]
 pub(crate) enum ErrorKind {

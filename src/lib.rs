@@ -33,7 +33,7 @@ impl FileData {
         Ok(Self { mmap })
     }
     #[cfg(feature = "rayon")]
-    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
+    fn vec(&self) -> Result<VecDeque<&str>, SensorError> {
         let lines: VecDeque<_> = self.mmap.par_split(|&b| b == b'\n').collect();
         let iter = lines.into_par_iter();
         iter.enumerate().map(FileData::to_utf8).collect()
@@ -45,9 +45,9 @@ impl FileData {
         iter.enumerate().map(FileData::to_utf8).collect()
     }
 
-    fn to_utf8<'a>((lineno, x): (usize, &'a [u8])) -> Result<&'a str, SensorError> {
-        std::str::from_utf8(x).or_else(
-            |err| Err(line_error(lineno + 1, err)), // "+1" to start at 1
+    fn to_utf8((lineno, x): (usize, &[u8])) -> Result<&str, SensorError> {
+        std::str::from_utf8(x).map_err(
+            |err| line_error(lineno + 1, err), // "+1" to start at 1
         )
     }
 }
@@ -203,7 +203,7 @@ fn first_pass(
                     "Unexpected empty line {}",
                     lineno + 2 // "+2" because of header+starting at 1
                 ))),
-                Ok(Some(data)) => Ok((lineno, data.clone())),
+                Ok(Some(data)) => Ok((lineno, data)),
                 Err(err) => Err(
                     line_error(lineno + 2, err), // "+2" because of header+starting at 1
                 ),
@@ -278,7 +278,7 @@ fn second_pass(
                 }
             }
         }
-        .or_else(|err| Err(line_error(lineno + 2, err)))?; // "+2" because of header+starting at 1
+        .map_err(|err| line_error(lineno + 2, err))?; // "+2" because of header+starting at 1
         Ok::<(usize, DataPoint), SensorError>((
             lineno,
             DataPoint {
@@ -340,7 +340,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
         .ok_or(SensorError::from("missing temperature"))?
         .trim_matches('"')
         .parse()
-        .or_else(|err| Err(SensorError::from_source("invalid temperature", err)))?;
+        .map_err(|err| SensorError::from_source("invalid temperature", err))?;
     let temperature = if as_celsius {
         Celsius::new(temperature)
     } else {
@@ -364,7 +364,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
 
 fn parse_date(datetime_str: &str) -> Result<chrono::DateTime<chrono::Utc>, SensorError> {
     let datetime = chrono::NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M")
-        .or_else(|err| Err(SensorError::from_source("failed to parse date", err)))?;
+        .map_err(|err| SensorError::from_source("failed to parse date", err))?;
     Ok(datetime.and_utc())
 }
 
