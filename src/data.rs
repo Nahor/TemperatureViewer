@@ -1,23 +1,23 @@
 // spell-checker:words chrono datetime
 
-#[derive(Copy, Clone, Debug)]
-pub struct Celsius(f64);
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Celsius(f32);
 impl Celsius {
-    pub fn new(v: f64) -> Celsius {
+    pub fn new(v: f32) -> Celsius {
         Celsius(v)
     }
-    pub fn value(self) -> f64 {
+    pub fn value(self) -> f32 {
         self.0
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Fahrenheit(f64);
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Fahrenheit(f32);
 impl Fahrenheit {
-    pub fn new(v: f64) -> Fahrenheit {
+    pub fn new(v: f32) -> Fahrenheit {
         Fahrenheit(v)
     }
-    pub fn value(self) -> f64 {
+    pub fn value(self) -> f32 {
         self.0
     }
 }
@@ -33,12 +33,16 @@ impl From<Fahrenheit> for Celsius {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct DataPoint {
-    pub timestamp: i64, // seconds since Unix epoch
+    // Seconds since Unix epoch
+    // Use timestamps instead of DateTime and the like because they tend to
+    // carry more info than we need. And given that we'll use millions of data
+    // points, the cost would be significant.
+    pub timestamp: i64,
     #[allow(unused)]
     pub temperature: Celsius,
     #[cfg(feature = "humidity")]
     #[allow(unused)]
-    pub humidity: f64,
+    pub humidity: f32,
 }
