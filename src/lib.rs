@@ -3,6 +3,7 @@
 mod data;
 mod error;
 
+use chrono::prelude::DateTime;
 pub use data::*;
 pub use error::{FromSource, SensorError};
 
@@ -111,13 +112,30 @@ pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
     //let data = first_pass(content, pos + 1, as_celsius)?;
     let data = first_pass(lines, as_celsius)?;
     let mid1 = std::time::Instant::now();
+    println!(
+        "    First pass: {:.3?} ({:.0} lines/sec)",
+        (mid1 - start),
+        data.0.len() as f32 / (mid1 - start).as_secs_f32()
+    );
+
     // Second pass converts the date from "fake UTC" to "real UTC" (UTC + TZ)
     let data = second_pass(data, tz)?;
     let mid2 = std::time::Instant::now();
+    println!(
+        "    Second pass: {:.3?} ({:.0} lines/sec)",
+        (mid2 - mid1),
+        data.0.len() as f32 / (mid2 - mid1).as_secs_f32()
+    );
+
     // Third pass check for date continuity (data at 1min interval)
     let data = third_pass(data)?;
 
     let end = std::time::Instant::now();
+    println!(
+        "    Third pass: {:.3?} ({:.0} lines/sec)",
+        (end - mid2),
+        data.len() as f32 / (end - mid2).as_secs_f32()
+    );
 
     // Statistics
     // {
@@ -133,21 +151,6 @@ pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
     //         data.len() as f32 / (end - start).as_secs_f32()
     //     );
     // }
-    println!(
-        "    First pass: {:.3?} ({:.0} lines/sec)",
-        (mid1 - start),
-        data.len() as f32 / (mid1 - start).as_secs_f32()
-    );
-    println!(
-        "    Second pass: {:.3?} ({:.0} lines/sec)",
-        (mid2 - mid1),
-        data.len() as f32 / (mid2 - mid1).as_secs_f32()
-    );
-    println!(
-        "    Third pass: {:.3?} ({:.0} lines/sec)",
-        (end - mid2),
-        data.len() as f32 / (end - mid2).as_secs_f32()
-    );
 
     println!(
         "Total: {:.3?} for {} lines ({:.0} lines/sec)",
@@ -172,7 +175,7 @@ fn parse_header(header: &str) -> Result<bool, SensorError> {
 fn first_pass(
     lines: VecDeque<&str>,
     as_celsius: bool,
-) -> Result<Vec<(usize, DataPoint)>, SensorError> {
+) -> Result<(Vec<usize>, Vec<DataPoint>), SensorError> {
     // // Seems faster to split first, and only then do the parsing
     // // (possible reason: a search for a char is limited by the memory bandwidth
     // // and by doing it separately, we avoid trashing the cache?)
@@ -198,132 +201,128 @@ fn first_pass(
     iter.map(|line| parse_line(line, as_celsius))
         .enumerate()
         .map(|(lineno, data)| {
+            // +2 because of the header + we want the line numbers to start at 1
+            let lineno = lineno + 2;
             match data {
                 Ok(None) => Err(SensorError::from(format!(
                     "Unexpected empty line {}",
-                    lineno + 2 // "+2" because of header+starting at 1
+                    lineno
                 ))),
                 Ok(Some(data)) => Ok((lineno, data)),
-                Err(err) => Err(
-                    line_error(lineno + 2, err), // "+2" because of header+starting at 1
-                ),
+                Err(err) => Err(line_error(lineno, err)),
             }
         })
-        .collect()
+        .try_fold(
+            || (Vec::new(), Vec::new()),
+            |(mut linenos, mut data), result| match result {
+                Ok((lineno, datapoint)) => {
+                    linenos.extend([lineno]);
+                    data.extend([datapoint]);
+                    Ok((linenos, data))
+                }
+                Err(err) => Err(err),
+            },
+        )
+        .try_reduce(
+            || (Vec::new(), Vec::new()),
+            |(mut acc_lines, mut acc_data), (fold_lines, fold_data)| {
+                acc_lines.extend(fold_lines);
+                acc_data.extend(fold_data);
+                Ok((acc_lines, acc_data))
+            },
+        )
 }
 
 fn second_pass(
-    data: Vec<(usize, DataPoint)>,
+    data_in: (Vec<usize>, Vec<DataPoint>),
     tz: impl chrono::TimeZone + Sync + Display,
-) -> Result<Vec<(usize, DataPoint)>, SensorError> {
+) -> Result<(Vec<usize>, Vec<DataPoint>), SensorError> {
     // To resolve the ambiguous dates, combine the data points with one shifted
     // back by 1h, so we have date D and date D-1h. If D-1h is NOT ambiguous,
     // it means D in the first half of the ambiguous period (still in daylight
     // saving). If D-1h IS ambiguous, then D is in the second half (with D-1h
-    // in the first half)
+    // in the first half).
     //
-    // To shift, we process/prepend 60 fake data points before chaining with
-    // the real data.
-    let start_datetime = data[0].1.timestamp;
-    let extra_data: Vec<_> = (1..=60)
-        .rev()
-        .map(|i| DataPoint {
-            timestamp: start_datetime - i * 60,
-            temperature: Celsius::new(0.0),
-            #[cfg(feature = "humidity")]
-            humidity: 0.0,
-        })
-        .collect();
+    // If it wasn't for the parallel processing, we could just compare with
+    // the datetime of the previous item (presumably properly converted). But
+    // with parallelism, the previous item might be in another thread, and yet
+    // to be processed.
+    // That means D will be converting to Utc twice: once when resolving D's
+    // ambiguity, then again when resolving D+1. But the ambiguous dates are
+    // only 2h per year (~8,766h/y), i.e. 0.02% of the dates, so insignificant.
+
+    let (lineno, data_v) = data_in;
 
     #[cfg(feature = "rayon")]
-    let iter = data.par_iter().zip(
-        extra_data
-            .par_iter()
-            .chain(data.par_iter().map(|(_, data)| data)),
-    );
+    let iter = data_v.par_iter();
     #[cfg(not(feature = "rayon"))]
-    let iter = data
-        .iter()
-        .zip(extra_data.iter().chain(data.iter().map(|(_, data)| data)));
+    let iter = data_v.iter();
 
-    iter.map(|(&(lineno, data), &data_ago)| {
-        let datetime = match tz.from_local_datetime(
-            &chrono::DateTime::from_timestamp(data.timestamp, 0)
-                .map(|d| d.naive_utc())
-                .ok_or("Invalid timestamp")?,
-        ) {
-            chrono::LocalResult::None => Err(SensorError::from(format!(
-                "failed to convert date from {tz} to Utc"
-            ))),
-            chrono::LocalResult::Single(date) => Ok(date),
-            chrono::LocalResult::Ambiguous(min, max) => {
-                // If it wasn't for the parallel processing, we could just
-                // compare with the datetime of the previous item (presumably
-                // properly converted). But with parallelism, the previous item
-                // might be in another thread, and yet to be processed.
-                // Moreover, this only applies to 0.02% of the dates (2 out of
-                // ~8760h/y), ... so yeah, no worth the trouble
-                let datetime_ago = tz.from_local_datetime(
-                    &chrono::DateTime::from_timestamp(data_ago.timestamp, 0)
-                        .map(|d| d.naive_utc())
-                        .ok_or("Invalid timestamp")?,
-                );
-                match datetime_ago {
-                    // If `data.datetime` is ambiguous, we are switching from
-                    // DST to STD. If so, date_ago can't be switching from STD
-                    // to DST, unless we have a huge gap in the original data.
-                    // So for now, just use the DST time, and we'll sort it out
-                    // when checking for date continuity
-                    chrono::LocalResult::None => Ok(min),
-                    chrono::LocalResult::Single(_) => Ok(min),
-                    chrono::LocalResult::Ambiguous(_, _) => Ok(max),
+    const SKIP_AMOUNT: usize = 60; // 1h-worth of data
+    let data = iter
+        .enumerate()
+        .map(|(i, &data)| {
+            let datetime = match tz.from_local_datetime(
+                &chrono::DateTime::from_timestamp(data.timestamp, 0)
+                    .map(|d| d.naive_utc())
+                    .ok_or("Invalid timestamp")?,
+            ) {
+                chrono::LocalResult::None => Err(SensorError::from(format!(
+                    "failed to convert date from {tz} to Utc"
+                ))),
+                chrono::LocalResult::Single(date) => Ok(date),
+                chrono::LocalResult::Ambiguous(min, max) => {
+                    if i < SKIP_AMOUNT {
+                        unimplemented!("File can't start when daylight saving ends");
+                    } else {
+                        let data_ago = data_v[i - SKIP_AMOUNT]; // safe since the enumerate value starts after skipping
+                        let datetime_ago = tz.from_local_datetime(
+                            &chrono::DateTime::from_timestamp(data_ago.timestamp, 0)
+                                .map(|d| d.naive_utc())
+                                .ok_or("Invalid timestamp")?,
+                        );
+                        match datetime_ago {
+                            // If `data.datetime` is ambiguous, we are switching from
+                            // DST to STD. If so, date_ago can't be switching from STD
+                            // to DST, which is the only normal way to get a gap,
+                            // unless we have a huge gap in the original data.
+                            chrono::LocalResult::None => Err(SensorError::from("missing data")),
+                            chrono::LocalResult::Single(_) => Ok(min),
+                            chrono::LocalResult::Ambiguous(_, _) => Ok(max),
+                        }
+                    }
                 }
             }
-        }
-        .map_err(|err| line_error(lineno + 2, err))?; // "+2" because of header+starting at 1
-        Ok::<(usize, DataPoint), SensorError>((
-            lineno,
-            DataPoint {
+            .map_err(|err| line_error(lineno[i], err))?;
+            Ok::<DataPoint, SensorError>(DataPoint {
                 timestamp: datetime.with_timezone(&chrono::Utc).timestamp(),
                 ..data
-            },
-        ))
-    })
-    .collect()
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((lineno, data))
 }
 
-fn third_pass(data: Vec<(usize, DataPoint)>) -> Result<Vec<DataPoint>, SensorError> {
-    let start_datetime = data[0].1.timestamp;
-    let extra_data: Vec<_> = (1..=1)
-        .rev()
-        .map(|i| DataPoint {
-            timestamp: start_datetime - i * 60,
-            temperature: Celsius::new(0.0),
-            #[cfg(feature = "humidity")]
-            humidity: 0.0,
-        })
-        .collect();
-
+fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, SensorError> {
     #[cfg(feature = "rayon")]
-    let iter = data.par_iter().zip(
-        extra_data
-            .par_iter()
-            .chain(data.par_iter().map(|(_, data)| data)),
-    );
+    let iter = vec_data.1.par_iter();
     #[cfg(not(feature = "rayon"))]
-    let iter = data.iter().zip(extra_data.iter().chain(data.iter()));
+    let iter = vec_data.1.iter_mut();
 
-    iter.map(|(&(lineno, data), &data_ago)| {
-        if (data.timestamp - data_ago.timestamp) == 60 {
-            Ok(data)
-        } else {
-            Err(SensorError::from(format!(
-                "missing data before line {}",
-                lineno + 2 // "+2" because of header+starting at 1
-            )))
+    iter.skip(1).enumerate().try_for_each(|(i, v_data)| {
+        let data_prev = vec_data.1[i];
+        if (v_data.timestamp - data_prev.timestamp) != 60 {
+            return Err(SensorError::from(format!(
+                "missing data before line {}, change from {} to {}",
+                vec_data.0[i + 1],
+                DateTime::from_timestamp(data_prev.timestamp, 0).unwrap(),
+                DateTime::from_timestamp(v_data.timestamp, 0).unwrap(),
+            )));
         }
-    })
-    .collect()
+        Ok(())
+    })?;
+
+    Ok(vec_data.1)
 }
 
 fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorError> {
@@ -332,10 +331,8 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
     }
     let mut record = line.split(',');
 
-    let datetime_str = record.next().expect("No first split");
-    let datetime_str = datetime_str.trim_matches('"');
-    let datetime = parse_date(datetime_str)?;
-    let timestamp = datetime.timestamp();
+    let datetime_str = record.next().expect("No first split").trim_matches('"');
+    let timestamp = parse_date(datetime_str)?.timestamp();
 
     let temperature = record
         .next()
