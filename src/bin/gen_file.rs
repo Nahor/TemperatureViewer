@@ -75,7 +75,7 @@ impl Progress {
         self.draw();
     }
     fn set_value(&mut self, v: usize) {
-        self.value = v;
+        self.value = v.min(self.max_value);
         self.draw();
     }
     fn finish(&mut self) {
