@@ -13,6 +13,8 @@ use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::{collections::VecDeque, error::Error, fmt::Display, fs, str::FromStr};
 
+const SEC_PER_MIN: i64 = 60;
+
 fn line_error<E: Error>(lineno: usize, err: E) -> SensorError
 where
     SensorError: FromSource<String, E>,
@@ -263,7 +265,7 @@ fn second_pass(
         .enumerate()
         .map(|(i, &data)| {
             let datetime = match tz.from_local_datetime(
-                &chrono::DateTime::from_timestamp(data.timestamp, 0)
+                &chrono::DateTime::from_timestamp(data.minutes as i64 * SEC_PER_MIN, 0)
                     .map(|d| d.naive_utc())
                     .ok_or("Invalid timestamp")?,
             ) {
@@ -277,9 +279,12 @@ fn second_pass(
                     } else {
                         let data_ago = data_v[i - SKIP_AMOUNT]; // safe since the enumerate value starts after skipping
                         let datetime_ago = tz.from_local_datetime(
-                            &chrono::DateTime::from_timestamp(data_ago.timestamp, 0)
-                                .map(|d| d.naive_utc())
-                                .ok_or("Invalid timestamp")?,
+                            &chrono::DateTime::from_timestamp(
+                                data_ago.minutes as i64 * SEC_PER_MIN,
+                                0,
+                            )
+                            .map(|d| d.naive_utc())
+                            .ok_or("Invalid timestamp")?,
                         );
                         match datetime_ago {
                             // If `data.datetime` is ambiguous, we are switching from
@@ -295,7 +300,7 @@ fn second_pass(
             }
             .map_err(|err| line_error(lineno[i], err))?;
             Ok::<DataPoint, SensorError>(DataPoint {
-                timestamp: datetime.with_timezone(&chrono::Utc).timestamp(),
+                minutes: (datetime.with_timezone(&chrono::Utc).timestamp() / SEC_PER_MIN) as i32,
                 ..data
             })
         })
@@ -311,12 +316,12 @@ fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, 
 
     iter.skip(1).enumerate().try_for_each(|(i, v_data)| {
         let data_prev = vec_data.1[i];
-        if (v_data.timestamp - data_prev.timestamp) != 60 {
+        if (v_data.minutes - data_prev.minutes) != 1 {
             return Err(SensorError::from(format!(
                 "missing data before line {}, change from {} to {}",
                 vec_data.0[i + 1],
-                DateTime::from_timestamp(data_prev.timestamp, 0).unwrap(),
-                DateTime::from_timestamp(v_data.timestamp, 0).unwrap(),
+                DateTime::from_timestamp(data_prev.minutes as i64 * SEC_PER_MIN, 0).unwrap(),
+                DateTime::from_timestamp(v_data.minutes as i64 * SEC_PER_MIN, 0).unwrap(),
             )));
         }
         Ok(())
@@ -332,7 +337,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
     let mut record = line.split(',');
 
     let datetime_str = record.next().expect("No first split").trim_matches('"');
-    let timestamp = parse_date(datetime_str)?.timestamp();
+    let minutes = (parse_date(datetime_str)?.timestamp() / SEC_PER_MIN) as i32;
 
     let temperature = record
         .next()
@@ -354,7 +359,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
         .or_else(|err| Err(SensorError::from_source("missing humidity", err)))?;
 
     Ok(Some(DataPoint {
-        timestamp,
+        minutes,
         temperature,
         #[cfg(feature = "humidity")]
         humidity,

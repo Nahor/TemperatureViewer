@@ -35,11 +35,14 @@ impl From<Fahrenheit> for Celsius {
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct DataPoint {
-    // Seconds since Unix epoch
-    // Use timestamps instead of DateTime and the like because they tend to
-    // carry more info than we need. And given that we'll use millions of data
-    // points, the cost would be significant.
-    pub timestamp: i64,
+    // Minutes since Unix epoch
+    // Use minutes instead of DateTime and the like because they tend to carry
+    // more precision than we need (seconds, nanoseconds) or duplicated data
+    // (timezone offset).
+    // Similarly, we only need a i32 which still gives us +/-4000 years.
+    // With potentially millions of data points, the saving is significant both
+    // in total memory usage, and in speed (cache usage)
+    pub minutes: i32,
     #[allow(unused)]
     pub temperature: Celsius,
     #[cfg(feature = "humidity")]
