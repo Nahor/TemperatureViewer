@@ -21,6 +21,7 @@ debug = true
 [dependencies]
 chrono = "0.4.38"
 chrono-tz = "0.10.0"
+iana-time-zone = "0.1.61"
 #egui = "0.24.1"
 #egui_tiles = "0.4.0"
 memmap2 = { version = "0.9.5", optional = true }

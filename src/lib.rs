@@ -14,6 +14,7 @@ use rayon::prelude::*;
 use std::{collections::VecDeque, error::Error, fmt::Display, fs, str::FromStr};
 
 const SEC_PER_MIN: i64 = 60;
+const DEFAULT_TIMEZONE: &str = "America/Los_Angeles";
 
 fn line_error<E: Error>(lineno: usize, err: E) -> SensorError
 where
@@ -94,18 +95,14 @@ pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
         return Err(SensorError::from("No data"));
     }
 
-    // TODO(nahor): how to get the timezone from Windows?
-    let tz = chrono_tz::Tz::from_str(&match std::env::var("TZ") {
-        Ok(tz) => {
-            println!("Timezone: {tz:?}");
-            tz
-        }
-        Err(_) => {
-            const DEFAULT: &str = "America/Los_Angeles";
-            println!("Using default timezone: {DEFAULT}");
-            DEFAULT.to_owned()
-        }
-    })?;
+    let tz_str = std::env::var("TZ")
+        .inspect(|tz| println!("Environment timezone: {tz}"))
+        .or_else(|_| iana_time_zone::get_timezone().inspect(|tz| println!("System timezone: {tz}")))
+        .unwrap_or_else(|_| {
+            println!("Default timezone: {DEFAULT_TIMEZONE}");
+            DEFAULT_TIMEZONE.to_owned()
+        });
+    let tz = chrono_tz::Tz::from_str(&tz_str)?;
 
     println!("Load: {:.03?}", (std::time::Instant::now() - start));
     let start = std::time::Instant::now();
