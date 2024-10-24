@@ -2,7 +2,6 @@
 
 use std::{
     error::Error,
-    fmt::Display,
     io::{BufWriter, Write},
     sync::{mpsc, Arc, Condvar, Mutex},
     time::{Duration, Instant},
@@ -19,15 +18,6 @@ const HEADER: &str = concat!(
     "\n"
 );
 const HEADER_LEN: usize = HEADER.len();
-
-#[derive(Debug, Default)]
-struct MyError;
-impl Error for MyError {}
-impl Display for MyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MyError")
-    }
-}
 
 fn size_format(v: usize) -> String {
     const KB: usize = 1024;
