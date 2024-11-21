@@ -27,6 +27,13 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Process SensorPush data in Zip format (compressed exported data)
+    Zip {
+        /// Compressed SensorPush data file (.zip)
+        #[arg(value_hint = clap::ValueHint::AnyPath)]
+        file: PathBuf,
+    },
+
     /// Generate tab-completion scripts for your shell
     Completions {
         #[arg(value_parser = value_parser!(Shell))]
@@ -39,6 +46,9 @@ fn main() -> Result<(), SensorError> {
     match args.command {
         Commands::Csv { file } => {
             let _ = sensor::parse_csv(file)?;
+        }
+        Commands::Zip { file } => {
+            let _ = sensor::parse_zip(file)?;
         }
         Commands::Completions { shell } => {
             let mut cmd = Args::command();

@@ -11,7 +11,16 @@ pub use error::{FromSource, SensorError};
 use memmap2::MmapOptions;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use std::{collections::VecDeque, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr};
+use std::{
+    collections::VecDeque,
+    error::Error,
+    fmt::Display,
+    fs::{self, File},
+    io::{Cursor, Read},
+    path::PathBuf,
+    str::FromStr,
+    time::Instant,
+};
 
 const SEC_PER_MIN: i64 = 60;
 const DEFAULT_TIMEZONE: &str = "America/Los_Angeles";
@@ -83,8 +92,63 @@ pub fn parse_csv(file: PathBuf) -> Result<Vec<DataPoint>, SensorError> {
     let start = std::time::Instant::now();
 
     let file = FileData::open(file)?;
-    let mut lines = file.vec()?;
+    let lines = file.vec()?;
 
+    parse_deque(lines, start)
+}
+
+pub fn parse_zip(file: PathBuf) -> Result<Vec<DataPoint>, SensorError> {
+    let file = File::open(file).unwrap();
+    let mmap = unsafe { MmapOptions::new().map(&file)? };
+    let file = Cursor::new(mmap.as_ref());
+
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return Err(SensorError::from("Not a .zip file"));
+    };
+
+    if archive.len() != 1 {
+        return Err(SensorError::from(
+            "Expected a .zip file containing a single .csv file",
+        ));
+    }
+
+    let mut file = archive.by_index(0).unwrap();
+    if !file.is_file() {
+        return Err(SensorError::from(
+            "Expected a .zip file containing a single .csv file",
+        ));
+    }
+    println!("Decompressing \"{}\" ({} bytes)", file.name(), file.size());
+
+    let mut data = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut data).unwrap();
+
+    parse_slice(&data)
+}
+
+pub fn parse_slice(data: &[u8]) -> Result<Vec<DataPoint>, SensorError> {
+    let start = std::time::Instant::now();
+
+    let lines: VecDeque<_> = {
+        let lines: VecDeque<_> = data.par_split(|&b| b == b'\n').collect();
+        lines
+            .into_par_iter()
+            .enumerate()
+            .map(|(lineno, x)| {
+                std::str::from_utf8(x).map_err(
+                    |err| line_error(lineno + 1, err), // "+1" to start at 1
+                )
+            })
+            .collect::<Result<_, _>>()
+    }?;
+
+    parse_deque(lines, start)
+}
+
+pub fn parse_deque(
+    mut lines: VecDeque<&str>,
+    start: Instant,
+) -> Result<Vec<DataPoint>, SensorError> {
     let as_celsius = parse_header(lines.pop_front().ok_or(SensorError::from("File empty"))?)?;
     if let Some(str) = lines.back() {
         if str.is_empty() {
