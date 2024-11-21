@@ -11,7 +11,7 @@ pub use error::{FromSource, SensorError};
 use memmap2::MmapOptions;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-use std::{collections::VecDeque, error::Error, fmt::Display, fs, str::FromStr};
+use std::{collections::VecDeque, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr};
 
 const SEC_PER_MIN: i64 = 60;
 const DEFAULT_TIMEZONE: &str = "America/Los_Angeles";
@@ -31,7 +31,7 @@ struct FileData {
 }
 #[cfg(feature = "mmap")]
 impl FileData {
-    fn open(file: &str) -> Result<Self, SensorError> {
+    fn open(file: PathBuf) -> Result<Self, SensorError> {
         let file = fs::File::open(file)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
         Ok(Self { mmap })
@@ -64,7 +64,7 @@ struct FileData {
 }
 #[cfg(not(feature = "mmap"))]
 impl FileData {
-    fn open(file: &str) -> Result<Self, SensorError> {
+    fn open(file: &PathBuf) -> Result<Self, SensorError> {
         Ok(Self {
             content: fs::read_to_string(file)?,
         })
@@ -79,7 +79,7 @@ impl FileData {
     }
 }
 
-pub fn parse(file: &str) -> Result<Vec<DataPoint>, SensorError> {
+pub fn parse_csv(file: PathBuf) -> Result<Vec<DataPoint>, SensorError> {
     let start = std::time::Instant::now();
 
     let file = FileData::open(file)?;
