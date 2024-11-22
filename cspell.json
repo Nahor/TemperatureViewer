@@ -4,9 +4,12 @@
     "dictionaryDefinitions": [],
     "dictionaries": [],
     "words": [
+        "chrono",
         "linenos",
         "memmap",
-        "mmap"
+        "mmap",
+        "multispace1",
+        "separated_foldl1"
     ],
     "ignoreWords": [],
     "import": []

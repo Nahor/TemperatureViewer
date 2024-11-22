@@ -1,6 +1,7 @@
 // spell-checker:words chrono datetime Deque eframe egui memmap2 mmap nahor
 
 mod data;
+mod date_parser;
 mod error;
 
 use chrono::prelude::DateTime;
@@ -397,7 +398,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
     }
     let mut record = line.split(',');
 
-    let datetime_str = record.next().expect("No first split").trim_matches('"');
+    let datetime_str = record.next().expect("No first split");
     let minutes = (parse_date(datetime_str)?.timestamp() / SEC_PER_MIN) as i32;
 
     let temperature = record
@@ -428,21 +429,7 @@ fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorE
 }
 
 fn parse_date(datetime_str: &str) -> Result<chrono::DateTime<chrono::Utc>, SensorError> {
-    let datetime = chrono::NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%d %H:%M")
-        .map_err(|err| SensorError::from_source("failed to parse date", err))?;
+    let datetime = date_parser::parse_date(datetime_str)?;
+
     Ok(datetime.and_utc())
 }
-
-// pub fn ui() {
-//     ui.heading("My egui Application");
-//     ui.horizontal(|ui| {
-//         ui.label("Your name: ");
-//         ui.text_edit_singleline(&mut name);
-//     });
-//     ui.add(egui::Slider::new(&mut age, 0..=120).text("age"));
-//     if ui.button("Click each year").clicked() {
-//         age += 1;
-//     }
-//     ui.label(format!("Hello '{name}', age {age}"));
-//     ui.image(egui::include_image!("ferris.png"));
-// }

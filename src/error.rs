@@ -7,6 +7,8 @@ use std::num::ParseFloatError;
 use std::str::Utf8Error;
 use std::sync::Arc;
 
+use winnow::error::ContextError;
+
 #[derive(Debug, Clone)]
 pub(crate) enum ErrorKind {
     None,
@@ -15,6 +17,7 @@ pub(crate) enum ErrorKind {
     ChronoParseError(chrono::ParseError),
     ChronoTzParseError(chrono_tz::ParseError),
     Utf8(Utf8Error),
+    WinnowError(String),
 }
 
 pub trait FromSource<S: ToString, E: Error> {
@@ -35,6 +38,7 @@ impl Error for SensorError {
             ErrorKind::ChronoParseError(e) => Some(e),
             ErrorKind::ChronoTzParseError(e) => Some(e),
             ErrorKind::Utf8(e) => Some(e),
+            ErrorKind::WinnowError(_) => None,
         }
     }
 }
@@ -52,6 +56,7 @@ impl std::fmt::Display for SensorError {
                 ErrorKind::ChronoParseError(err) => err.to_string(),
                 ErrorKind::ChronoTzParseError(err) => err.to_string(),
                 ErrorKind::Utf8(err) => err.to_string(),
+                ErrorKind::WinnowError(err) => err.to_string(),
             },
         )
     }
@@ -79,6 +84,9 @@ impl std::fmt::Debug for SensorError {
             ErrorKind::Utf8(err) => {
                 se.field("source", &err);
             }
+            ErrorKind::WinnowError(err) => {
+                se.field("source", &err);
+            }
         }
         se.finish()
     }
@@ -98,6 +106,24 @@ impl From<ParseFloatError> for SensorError {
         Self {
             desc: None,
             source: ErrorKind::ParseFloatError(source),
+        }
+    }
+}
+
+impl From<winnow::error::ParseError<&str, ContextError>> for SensorError {
+    fn from(value: winnow::error::ParseError<&str, ContextError>) -> Self {
+        Self {
+            desc: None,
+            source: ErrorKind::WinnowError(format!("{value:?}").to_string()),
+        }
+    }
+}
+
+impl From<winnow::error::ParseError<&[u8], ContextError>> for SensorError {
+    fn from(value: winnow::error::ParseError<&[u8], ContextError>) -> Self {
+        Self {
+            desc: None,
+            source: ErrorKind::WinnowError(format!("{value:?}").to_string()),
         }
     }
 }

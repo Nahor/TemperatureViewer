@@ -28,6 +28,7 @@ iana-time-zone = "0.1.61"
 #egui_tiles = "0.4.0"
 memmap2 = { version = "0.9.5", optional = true }
 rayon = { version = "1.10.0", optional = true }
+winnow = "0.6.20"
 zip = "2.2.1"
 
 [profile.release-with-debug]
