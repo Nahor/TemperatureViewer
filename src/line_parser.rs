@@ -120,8 +120,9 @@ fn parse_humidity(input: &mut &[u8]) -> PResult<f32> {
 }
 
 #[cfg(test)]
+#[allow(unused)]
 mod test {
-    #[allow(unused)]
+    use std::hint::black_box;
     use std::time::Instant;
 
     use super::*;
@@ -278,7 +279,9 @@ expected 00..59"#[1..];
             let duration = loop {
                 const LOOP_COUNT: u64 = 1000;
                 for _ in 0..LOOP_COUNT {
-                    let _ = chrono::NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M").unwrap();
+                    let _ = black_box(
+                        chrono::NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M").unwrap(),
+                    );
                 }
                 count += LOOP_COUNT;
 
@@ -300,7 +303,7 @@ expected 00..59"#[1..];
             let duration = loop {
                 const LOOP_COUNT: u64 = 1000;
                 for _ in 0..LOOP_COUNT {
-                    let _ = parse_unquoted_date.parse(input.as_bytes()).unwrap();
+                    let _ = black_box(parse_unquoted_date.parse(input.as_bytes()).unwrap());
                 }
                 count += LOOP_COUNT;
 
