@@ -1,12 +1,13 @@
 // spell-checker:words chrono datetime Deque eframe egui memmap2 mmap nahor
 
 mod data;
-mod date_parser;
 mod error;
+mod line_parser;
 
 use chrono::prelude::DateTime;
 pub use data::*;
 pub use error::{FromSource, SensorError};
+use line_parser::parse_line;
 
 #[cfg(feature = "mmap")]
 use memmap2::MmapOptions;
@@ -47,22 +48,23 @@ impl FileData {
         Ok(Self { mmap })
     }
     #[cfg(feature = "rayon")]
-    fn vec(&self) -> Result<VecDeque<&str>, SensorError> {
+    fn vec(&self) -> Result<VecDeque<&[u8]>, SensorError> {
         let lines: VecDeque<_> = self.mmap.par_split(|&b| b == b'\n').collect();
         let iter = lines.into_par_iter();
         iter.enumerate().map(FileData::to_utf8).collect()
     }
     #[cfg(not(feature = "rayon"))]
-    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
+    fn vec<'a>(&'a self) -> Result<VecDeque<&'a [u8]>, SensorError> {
         let lines: VecDeque<_> = self.mmap.split(|&b| b == b'\n').collect();
         let iter = lines.into_iter();
         iter.enumerate().map(FileData::to_utf8).collect()
     }
 
-    fn to_utf8((lineno, x): (usize, &[u8])) -> Result<&str, SensorError> {
-        std::str::from_utf8(x).map_err(
-            |err| line_error(lineno + 1, err), // "+1" to start at 1
-        )
+    fn to_utf8((_lineno, x): (usize, &[u8])) -> Result<&[u8], SensorError> {
+        // std::str::from_utf8(x).map_err(
+        //     |err| line_error(lineno + 1, err), // "+1" to start at 1
+        // )
+        Ok(x)
     }
 }
 
@@ -135,10 +137,11 @@ pub fn parse_slice(data: &[u8]) -> Result<Vec<DataPoint>, SensorError> {
         lines
             .into_par_iter()
             .enumerate()
-            .map(|(lineno, x)| {
-                std::str::from_utf8(x).map_err(
-                    |err| line_error(lineno + 1, err), // "+1" to start at 1
-                )
+            .map(|(_lineno, x)| {
+                // std::str::from_utf8(x).map_err(
+                //     |err| line_error(lineno + 1, err), // "+1" to start at 1
+                // )
+                Ok::<_, SensorError>(x)
             })
             .collect::<Result<_, _>>()
     }?;
@@ -147,7 +150,7 @@ pub fn parse_slice(data: &[u8]) -> Result<Vec<DataPoint>, SensorError> {
 }
 
 pub fn parse_deque(
-    mut lines: VecDeque<&str>,
+    mut lines: VecDeque<&[u8]>,
     start: Instant,
 ) -> Result<Vec<DataPoint>, SensorError> {
     let as_celsius = parse_header(lines.pop_front().ok_or(SensorError::from("File empty"))?)?;
@@ -226,10 +229,10 @@ pub fn parse_deque(
     Ok(data)
 }
 
-fn parse_header(header: &str) -> Result<bool, SensorError> {
-    if header == r#""Timestamp","Temperature (°C)","Relative Humidity (%)""# {
+fn parse_header(header: &[u8]) -> Result<bool, SensorError> {
+    if header == r#""Timestamp","Temperature (°C)","Relative Humidity (%)""#.as_bytes() {
         Ok(true)
-    } else if header == r#""Timestamp","Temperature (°F)","Relative Humidity (%)""# {
+    } else if header == r#""Timestamp","Temperature (°F)","Relative Humidity (%)""#.as_bytes() {
         Ok(false)
     } else {
         Err(SensorError::from("invalid header"))
@@ -237,7 +240,7 @@ fn parse_header(header: &str) -> Result<bool, SensorError> {
 }
 
 fn first_pass(
-    lines: VecDeque<&str>,
+    lines: VecDeque<&[u8]>,
     as_celsius: bool,
 ) -> Result<(Vec<usize>, Vec<DataPoint>), SensorError> {
     // // Seems faster to split first, and only then do the parsing
@@ -390,46 +393,4 @@ fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, 
     })?;
 
     Ok(vec_data.1)
-}
-
-fn parse_line(line: &str, as_celsius: bool) -> Result<Option<DataPoint>, SensorError> {
-    if line.is_empty() {
-        return Ok(None);
-    }
-    let mut record = line.split(',');
-
-    let datetime_str = record.next().expect("No first split");
-    let minutes = (parse_date(datetime_str)?.timestamp() / SEC_PER_MIN) as i32;
-
-    let temperature = record
-        .next()
-        .ok_or(SensorError::from("missing temperature"))?
-        .trim_matches('"')
-        .parse()
-        .map_err(|err| SensorError::from_source("invalid temperature", err))?;
-    let temperature = if as_celsius {
-        Celsius::new(temperature)
-    } else {
-        Fahrenheit::new(temperature).into()
-    };
-    #[cfg(feature = "humidity")]
-    let humidity = record
-        .next()
-        .ok_or(SensorError::from("missing humidity"))?
-        .trim_matches('"')
-        .parse()
-        .or_else(|err| Err(SensorError::from_source("missing humidity", err)))?;
-
-    Ok(Some(DataPoint {
-        minutes,
-        temperature,
-        #[cfg(feature = "humidity")]
-        humidity,
-    }))
-}
-
-fn parse_date(datetime_str: &str) -> Result<chrono::DateTime<chrono::Utc>, SensorError> {
-    let datetime = date_parser::parse_date(datetime_str)?;
-
-    Ok(datetime.and_utc())
 }

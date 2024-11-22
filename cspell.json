@@ -8,6 +8,7 @@
         "linenos",
         "memmap",
         "mmap",
+        "multispace0",
         "multispace1",
         "separated_foldl1"
     ],
