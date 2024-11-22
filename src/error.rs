@@ -110,15 +110,6 @@ impl From<ParseFloatError> for SensorError {
     }
 }
 
-impl From<winnow::error::ParseError<&str, ContextError>> for SensorError {
-    fn from(value: winnow::error::ParseError<&str, ContextError>) -> Self {
-        Self {
-            desc: None,
-            source: ErrorKind::WinnowError(format!("{value:?}").to_string()),
-        }
-    }
-}
-
 impl From<winnow::error::ParseError<&[u8], ContextError>> for SensorError {
     fn from(value: winnow::error::ParseError<&[u8], ContextError>) -> Self {
         Self {
