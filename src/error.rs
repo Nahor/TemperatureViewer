@@ -20,7 +20,7 @@ pub(crate) enum ErrorKind {
     WinnowError(String),
 }
 
-pub trait FromSource<S: ToString, E: Error> {
+pub trait FromSource<S: ToString, E> {
     fn from_source(desc: S, err: E) -> SensorError;
 }
 

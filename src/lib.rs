@@ -15,7 +15,6 @@ use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::{
     collections::VecDeque,
-    error::Error,
     fmt::Display,
     fs::{self, File},
     io::{Cursor, Read},
@@ -27,7 +26,7 @@ use std::{
 const SEC_PER_MIN: i64 = 60;
 const DEFAULT_TIMEZONE: &str = "America/Los_Angeles";
 
-fn line_error<E: Error>(lineno: usize, err: E) -> SensorError
+fn line_error<E>(lineno: usize, err: E) -> SensorError
 where
     SensorError: FromSource<String, E>,
 {
