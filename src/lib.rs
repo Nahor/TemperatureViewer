@@ -14,9 +14,8 @@ use memmap2::MmapOptions;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use std::{
-    collections::VecDeque,
     fmt::Display,
-    fs::{self, File},
+    fs::{self},
     io::{Cursor, Read},
     path::PathBuf,
     str::FromStr,
@@ -46,24 +45,8 @@ impl FileData {
         let mmap = unsafe { MmapOptions::new().map(&file)? };
         Ok(Self { mmap })
     }
-    #[cfg(feature = "rayon")]
-    fn vec(&self) -> Result<VecDeque<&[u8]>, SensorError> {
-        let lines: VecDeque<_> = self.mmap.par_split(|&b| b == b'\n').collect();
-        let iter = lines.into_par_iter();
-        iter.enumerate().map(FileData::to_utf8).collect()
-    }
-    #[cfg(not(feature = "rayon"))]
-    fn vec<'a>(&'a self) -> Result<VecDeque<&'a [u8]>, SensorError> {
-        let lines: VecDeque<_> = self.mmap.split(|&b| b == b'\n').collect();
-        let iter = lines.into_iter();
-        iter.enumerate().map(FileData::to_utf8).collect()
-    }
-
-    fn to_utf8((_lineno, x): (usize, &[u8])) -> Result<&[u8], SensorError> {
-        // std::str::from_utf8(x).map_err(
-        //     |err| line_error(lineno + 1, err), // "+1" to start at 1
-        // )
-        Ok(x)
+    fn as_bytes(&self) -> &[u8] {
+        &self.mmap
     }
 }
 
@@ -75,34 +58,26 @@ struct FileData {
 }
 #[cfg(not(feature = "mmap"))]
 impl FileData {
-    fn open(file: &PathBuf) -> Result<Self, SensorError> {
+    fn open(file: PathBuf) -> Result<Self, SensorError> {
         Ok(Self {
             content: fs::read_to_string(file)?,
         })
     }
-    #[cfg(feature = "rayon")]
-    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
-        Ok(self.content.par_split('\n').collect())
-    }
-    #[cfg(not(feature = "rayon"))]
-    fn vec<'a>(&'a self) -> Result<VecDeque<&'a str>, SensorError> {
-        Ok(self.content.split('\n').collect())
+    fn as_bytes(&self) -> &[u8] {
+        self.content.as_bytes()
     }
 }
 
 pub fn parse_csv(file: PathBuf) -> Result<Vec<DataPoint>, SensorError> {
     let start = std::time::Instant::now();
-
     let file = FileData::open(file)?;
-    let lines = file.vec()?;
-
-    parse_deque(lines, start)
+    parse_slice(file.as_bytes(), start)
 }
 
 pub fn parse_zip(file: PathBuf) -> Result<Vec<DataPoint>, SensorError> {
-    let file = File::open(file).unwrap();
-    let mmap = unsafe { MmapOptions::new().map(&file)? };
-    let file = Cursor::new(mmap.as_ref());
+    let start = std::time::Instant::now();
+    let file = FileData::open(file)?;
+    let file = Cursor::new(file.as_bytes());
 
     let Ok(mut archive) = zip::ZipArchive::new(file) else {
         return Err(SensorError::from("Not a .zip file"));
@@ -125,39 +100,27 @@ pub fn parse_zip(file: PathBuf) -> Result<Vec<DataPoint>, SensorError> {
     let mut data = Vec::with_capacity(file.size() as usize);
     file.read_to_end(&mut data).unwrap();
 
-    parse_slice(&data)
+    parse_slice(&data, start)
 }
 
-pub fn parse_slice(data: &[u8]) -> Result<Vec<DataPoint>, SensorError> {
-    let start = std::time::Instant::now();
+pub fn parse_slice(data: &[u8], start: Instant) -> Result<Vec<DataPoint>, SensorError> {
+    let mut lines = Vec::with_capacity(data.len() / 39 + 1);
 
-    let lines: VecDeque<_> = {
-        let lines: VecDeque<_> = data.par_split(|&b| b == b'\n').collect();
-        lines
-            .into_par_iter()
-            .enumerate()
-            .map(|(_lineno, x)| {
-                // std::str::from_utf8(x).map_err(
-                //     |err| line_error(lineno + 1, err), // "+1" to start at 1
-                // )
-                Ok::<_, SensorError>(x)
-            })
-            .collect::<Result<_, _>>()
-    }?;
+    #[cfg(feature = "rayon")]
+    lines.par_extend(data.par_split(|&b| b == b'\n').collect::<Vec<_>>());
+    #[cfg(not(feature = "rayon"))]
+    lines.extend(data.split(|&b| b == b'\n').collect::<Vec<_>>());
 
-    parse_deque(lines, start)
+    parse_lines(lines, start)
 }
 
-pub fn parse_deque(
-    mut lines: VecDeque<&[u8]>,
-    start: Instant,
-) -> Result<Vec<DataPoint>, SensorError> {
-    let as_celsius = parse_header(lines.pop_front().ok_or(SensorError::from("File empty"))?)?;
-    if let Some(str) = lines.back() {
-        if str.is_empty() {
-            lines.pop_back();
-        }
-    }
+pub fn parse_lines(lines: Vec<&[u8]>, start: Instant) -> Result<Vec<DataPoint>, SensorError> {
+    let as_celsius = parse_header(lines.first().ok_or(SensorError::from("File empty"))?)?;
+    let lines = match lines.last() {
+        Some(line) if !line.is_empty() => &lines[1..lines.len()],
+        Some(_) => &lines[1..lines.len() - 1],
+        None => &Vec::<&[u8]>::new()[..],
+    };
     if lines.is_empty() {
         return Err(SensorError::from("No data"));
     }
@@ -239,7 +202,7 @@ fn parse_header(header: &[u8]) -> Result<bool, SensorError> {
 }
 
 fn first_pass(
-    lines: VecDeque<&[u8]>,
+    lines: &[&[u8]],
     as_celsius: bool,
 ) -> Result<(Vec<usize>, Vec<DataPoint>), SensorError> {
     // // Seems faster to split first, and only then do the parsing
@@ -264,7 +227,12 @@ fn first_pass(
     #[cfg(not(feature = "rayon"))]
     let iter = lines.into_iter();
 
-    iter.map(|line| parse_line(line, as_celsius))
+    #[allow(
+        unused_mut,
+        reason = "Rust's try_fold() needs mutability, Rayon's does not"
+    )]
+    let mut map_iter = iter
+        .map(|line| parse_line(line, as_celsius))
         .enumerate()
         .map(|(lineno, data)| {
             // +2 because of the header + we want the line numbers to start at 1
@@ -277,7 +245,11 @@ fn first_pass(
                 Ok(Some(data)) => Ok((lineno, data)),
                 Err(err) => Err(line_error(lineno, err)),
             }
-        })
+        });
+
+    // Ideally, we would have a "try_unzip"
+    #[cfg(feature = "rayon")]
+    let result = map_iter
         .try_fold(
             || (Vec::new(), Vec::new()),
             |(mut linenos, mut data), result| match result {
@@ -296,7 +268,23 @@ fn first_pass(
                 acc_data.extend(fold_data);
                 Ok((acc_lines, acc_data))
             },
-        )
+        );
+    #[cfg(not(feature = "rayon"))]
+    let result = map_iter.try_fold(
+        (
+            Vec::with_capacity(lines.len()),
+            Vec::with_capacity(lines.len()),
+        ),
+        |(mut linenos, mut data), result| match result {
+            Ok((lineno, datapoint)) => {
+                linenos.extend([lineno]);
+                data.extend([datapoint]);
+                Ok((linenos, data))
+            }
+            Err(err) => Err(err),
+        },
+    );
+    result
 }
 
 fn second_pass(
@@ -376,7 +364,7 @@ fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, 
     #[cfg(feature = "rayon")]
     let iter = vec_data.1.par_iter();
     #[cfg(not(feature = "rayon"))]
-    let iter = vec_data.1.iter_mut();
+    let iter = vec_data.1.iter();
 
     iter.skip(1).enumerate().try_for_each(|(i, v_data)| {
         let data_prev = vec_data.1[i];
