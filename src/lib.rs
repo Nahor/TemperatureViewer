@@ -365,23 +365,21 @@ fn second_pass(
 }
 
 fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, SensorError> {
-    #[cfg(feature = "rayon")]
-    let iter = vec_data.1.par_iter();
-    #[cfg(not(feature = "rayon"))]
-    let iter = vec_data.1.iter();
-
-    iter.skip(1).enumerate().try_for_each(|(i, v_data)| {
-        let data_prev = vec_data.1[i];
-        if (v_data.minutes - data_prev.minutes) != 1 {
-            return Err(SensorError::from(format!(
-                "missing data before line {}, change from {} to {}",
-                vec_data.0[i + 1],
-                DateTime::from_timestamp(data_prev.minutes as i64 * SEC_PER_MIN, 0).unwrap(),
-                DateTime::from_timestamp(v_data.minutes as i64 * SEC_PER_MIN, 0).unwrap(),
-            )));
-        }
-        Ok(())
-    })?;
+    vec_data
+        .1
+        .windows(2)
+        .enumerate()
+        .try_for_each(|(i, data)| {
+            if (data[1].minutes - data[0].minutes) != 1 {
+                return Err(SensorError::from(format!(
+                    "missing data before line {}, change from {} to {}",
+                    vec_data.0[i + 1],
+                    DateTime::from_timestamp(data[0].minutes as i64 * SEC_PER_MIN, 0).unwrap(),
+                    DateTime::from_timestamp(data[1].minutes as i64 * SEC_PER_MIN, 0).unwrap(),
+                )));
+            }
+            Ok(())
+        })?;
 
     Ok(vec_data.1)
 }
