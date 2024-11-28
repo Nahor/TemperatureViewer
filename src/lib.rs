@@ -22,6 +22,10 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "rayon")]
+const MIN_PARSE_JOB_SIZE: usize = 16384;
+#[cfg(feature = "rayon")]
+const MIN_DST_JOB_SIZE: usize = MIN_PARSE_JOB_SIZE * 4;
 const SEC_PER_MIN: i64 = 60;
 const DEFAULT_TIMEZONE: &str = "America/Los_Angeles";
 
@@ -223,7 +227,7 @@ fn first_pass(
     // }
 
     #[cfg(feature = "rayon")]
-    let iter = lines.into_par_iter();
+    let iter = lines.into_par_iter().with_min_len(MIN_PARSE_JOB_SIZE);
     #[cfg(not(feature = "rayon"))]
     let iter = lines.into_iter();
 
@@ -308,7 +312,7 @@ fn second_pass(
     let (lineno, data_v) = data_in;
 
     #[cfg(feature = "rayon")]
-    let iter = data_v.par_iter();
+    let iter = data_v.par_iter().with_min_len(MIN_DST_JOB_SIZE);
     #[cfg(not(feature = "rayon"))]
     let iter = data_v.iter();
 
