@@ -3,7 +3,5 @@
 /*.code-workspace
 /.vscode
 
-/Cargo.lock
-
 /*.csv
 /*.zip

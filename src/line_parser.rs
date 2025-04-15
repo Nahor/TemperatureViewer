@@ -1,9 +1,10 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use winnow::{
-    ascii::{dec_uint, digit1, float, multispace0, Uint},
-    combinator::{delimited, rest, separated_pair, seq, trace},
+    Parser,
+    ascii::{Uint, dec_uint, digit1, float, multispace0},
+    combinator::{delimited, separated_pair, seq, trace},
     error::{StrContext, StrContextValue},
-    PResult, Parser,
+    token::rest,
 };
 
 use crate::{Celsius, DataPoint, Fahrenheit, SensorError};
@@ -11,33 +12,45 @@ use crate::{Celsius, DataPoint, Fahrenheit, SensorError};
 const SEC_PER_MIN: i64 = 60;
 
 pub fn parse_line(line: &[u8], as_celsius: bool) -> Result<Option<DataPoint>, SensorError> {
-    if line.is_empty() {
-        return Ok(None);
-    }
-
-    #[allow(unused, reason = "humidity is a compilation feature")]
-    let datapoint = seq!(
-        parse_quoted_date.map(|date| (date.and_utc().timestamp() / SEC_PER_MIN) as i32),
-        _:(multispace0,',',multispace0),
-        parse_temperature(as_celsius),
-        _:(multispace0,',',multispace0),
-        parse_humidity,
-    )
-    .map(|(minutes, temperature, humidity)| DataPoint {
-        minutes,
-        temperature,
-        #[cfg(feature = "humidity")]
-        humidity,
-    })
-    .parse(line)?;
-    Ok(Some(datapoint))
+    Ok(parse_line_(as_celsius).parse(line)?)
 }
 
-fn parse_quoted_date(input: &mut &[u8]) -> PResult<NaiveDateTime> {
+pub fn parse_line_(
+    as_celsius: bool,
+) -> impl FnMut(&mut &[u8]) -> winnow::Result<Option<DataPoint>> {
+    move |input: &mut &[u8]| {
+        if input.is_empty() {
+            return Ok(None);
+        }
+
+        #[allow(unused, reason = "humidity is a compilation feature")]
+        trace(
+            "parse_line",
+            seq!(
+                parse_quoted_date.map(|date| (date.and_utc().timestamp() / SEC_PER_MIN) as i32),
+                _:(multispace0,',',multispace0),
+                parse_temperature(as_celsius),
+                _:(multispace0,',',multispace0),
+                parse_humidity,
+            )
+            .map(|(minutes, temperature, humidity)| {
+                Some(DataPoint {
+                    minutes,
+                    temperature,
+                    #[cfg(feature = "humidity")]
+                    humidity,
+                })
+            }),
+        )
+        .parse_next(input)
+    }
+}
+
+fn parse_quoted_date(input: &mut &[u8]) -> winnow::Result<NaiveDateTime> {
     trace("parse_date", delimited('"', parse_unquoted_date, '"')).parse_next(input)
 }
 
-fn parse_unquoted_date(input: &mut &[u8]) -> PResult<NaiveDateTime> {
+fn parse_unquoted_date(input: &mut &[u8]) -> winnow::Result<NaiveDateTime> {
     trace(
         "parse_unquoted_date",
         separated_pair(parse_ymd, ' ', parse_hm).map(|((year, month, day), (hour, minute))| {
@@ -50,7 +63,7 @@ fn parse_unquoted_date(input: &mut &[u8]) -> PResult<NaiveDateTime> {
     .parse_next(input)
 }
 
-fn parse_ymd(input: &mut &[u8]) -> PResult<(u16, u8, u8)> {
+fn parse_ymd(input: &mut &[u8]) -> winnow::Result<(u16, u8, u8)> {
     trace(
         "parse_ymd",
         seq!(
@@ -70,7 +83,7 @@ fn parse_ymd(input: &mut &[u8]) -> PResult<(u16, u8, u8)> {
     .parse_next(input)
 }
 
-fn parse_hm(input: &mut &[u8]) -> PResult<(u8, u8)> {
+fn parse_hm(input: &mut &[u8]) -> winnow::Result<(u8, u8)> {
     trace(
         "parse_hm",
         separated_pair(
@@ -90,14 +103,14 @@ fn parse_hm(input: &mut &[u8]) -> PResult<(u8, u8)> {
 
 // dec_uint doesn't handle numbers with leading `0`, e.g. `02` gets parsed as `0`
 // (with `2` remaining)
-fn dec_uint_with_leading<O>(input: &mut &[u8]) -> PResult<O>
+fn dec_uint_with_leading<O>(input: &mut &[u8]) -> winnow::Result<O>
 where
     O: Uint + std::str::FromStr,
 {
     digit1.parse_to().parse_next(input)
 }
 
-fn parse_temperature(as_celsius: bool) -> impl FnMut(&mut &[u8]) -> PResult<Celsius> {
+fn parse_temperature(as_celsius: bool) -> impl FnMut(&mut &[u8]) -> winnow::Result<Celsius> {
     move |input: &mut &[u8]| {
         delimited('"', float, '"')
             .map(|temperature| {
@@ -111,7 +124,7 @@ fn parse_temperature(as_celsius: bool) -> impl FnMut(&mut &[u8]) -> PResult<Cels
     }
 }
 
-fn parse_humidity(input: &mut &[u8]) -> PResult<f32> {
+fn parse_humidity(input: &mut &[u8]) -> winnow::Result<f32> {
     if cfg!(feature = "humidity") {
         delimited('"', float::<_, f32, _>, '"').parse_next(input)
     } else {
