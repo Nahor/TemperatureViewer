@@ -3,7 +3,7 @@
 use std::{
     error::Error,
     io::{BufWriter, Write},
-    sync::{mpsc, Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, mpsc},
     time::{Duration, Instant},
     vec,
 };

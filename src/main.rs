@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 // use eframe::egui;
-use clap::{value_parser, CommandFactory, Parser, Subcommand};
-use clap_complete::{generate, Shell};
+use clap::{CommandFactory, Parser, Subcommand, value_parser};
+use clap_complete::{Shell, generate};
 use sensor::SensorError;
 
 //impl std::error::Error for eframe::Error{};
