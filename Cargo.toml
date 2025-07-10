@@ -19,17 +19,17 @@ debug = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chrono = "0.4.40"
+chrono = "0.4.41"
 chrono-tz = "0.10.3"
-clap = { version = "4.5.36", features = ["derive"] }
-clap_complete = "4.5.47"
+clap = { version = "4.5.41", features = ["derive"] }
+clap_complete = "4.5.55"
 iana-time-zone = "0.1.63"
 #egui = "0.24.1"
 #egui_tiles = "0.4.0"
 memmap2 = { version = "0.9.5", optional = true }
 rayon = { version = "1.10.0", optional = true }
-winnow = "0.7.6"
-zip = "2.6.1"
+winnow = "0.7.11"
+zip = "4.3.0"
 
 [profile.release-with-debug]
 inherits = "release"
