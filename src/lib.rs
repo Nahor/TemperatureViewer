@@ -33,7 +33,7 @@ fn line_error<E>(lineno: usize, err: E) -> SensorError
 where
     SensorError: FromSource<String, E>,
 {
-    SensorError::from_source(format!("failed to parse line {}", lineno), err)
+    SensorError::from_source(format!("failed to parse line {lineno}"), err)
 }
 
 //////////////////////////////////////
@@ -242,10 +242,7 @@ fn first_pass(
             // +2 because of the header + we want the line numbers to start at 1
             let lineno = lineno + 2;
             match data {
-                Ok(None) => Err(SensorError::from(format!(
-                    "Unexpected empty line {}",
-                    lineno
-                ))),
+                Ok(None) => Err(SensorError::from(format!("Unexpected empty line {lineno}"))),
                 Ok(Some(data)) => Ok((lineno, data)),
                 Err(err) => Err(line_error(lineno, err)),
             }

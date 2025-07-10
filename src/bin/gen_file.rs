@@ -20,17 +20,18 @@ const HEADER: &str = concat!(
 const HEADER_LEN: usize = HEADER.len();
 
 fn size_format(v: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = 1024 * KB;
-    const GB: usize = 1024 * MB;
+    const KB: f32 = 1024_f32;
+    const MB: f32 = 1024_f32 * KB;
+    const GB: f32 = 1024_f32 * MB;
+    let v = v as f32;
     if v > GB {
-        format!("{:.2}GB", v as f32 / GB as f32)
+        format!("{v:.2}GB", v = v / GB)
     } else if v > MB {
-        format!("{:.2}MB", v as f32 / MB as f32)
+        format!("{v:.2}MB", v = v / MB)
     } else if v > KB {
-        format!("{:.2}KB", v as f32 / KB as f32)
+        format!("{v:.2}KB", v = v / KB)
     } else {
-        format!("{}B", v)
+        format!("{v}B")
     }
 }
 
