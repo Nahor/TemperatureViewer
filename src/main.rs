@@ -4,7 +4,14 @@
 use std::path::PathBuf;
 
 // use eframe::egui;
-use clap::{CommandFactory, Parser, Subcommand, value_parser};
+use clap::{
+    CommandFactory, Parser, Subcommand,
+    builder::{
+        Styles,
+        styling::{AnsiColor, Effects},
+    },
+    value_parser,
+};
 use clap_complete::{Shell, generate};
 use sensor::SensorError;
 
@@ -12,7 +19,7 @@ use sensor::SensorError;
 
 /// Show various graphs from a SensorPush temperature sensor.
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about, long_about = None, styles=styles())]
 struct Args {
     #[command(subcommand)]
     command: Commands,
@@ -39,6 +46,17 @@ enum Commands {
         #[arg(value_parser = value_parser!(Shell))]
         shell: Shell,
     },
+}
+
+fn styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::BrightGreen.on_default() | Effects::BOLD | Effects::UNDERLINE)
+        .usage(AnsiColor::Yellow.on_default() | Effects::BOLD | Effects::UNDERLINE)
+        .literal(AnsiColor::BrightCyan.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Cyan.on_default())
+        .error(AnsiColor::BrightRed.on_default() | Effects::BOLD)
+        .valid(AnsiColor::BrightGreen.on_default() | Effects::BOLD)
+        .invalid(AnsiColor::BrightYellow.on_default() | Effects::BOLD)
 }
 
 fn main() -> Result<(), SensorError> {
