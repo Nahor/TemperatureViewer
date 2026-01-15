@@ -60,6 +60,22 @@ fn styles() -> Styles {
 }
 
 fn main() -> Result<(), SensorError> {
+    // Convert `\` to `/` to be compatible with POSIX shells on Windows
+    let mut app = std::env::args().next().unwrap();
+    if cfg!(windows) {
+        app = std::path::absolute(app)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        app = app.replace('\\', "/");
+    }
+
+    // `complete()` does not return if the request is for a dynamic completion
+    // i.e. `COMPLETE=<shell> app ...`
+    clap_complete::CompleteEnv::with_factory(Args::command)
+        .completer(app)
+        .complete();
+
     let args = Args::parse();
     match args.command {
         Commands::Csv { file } => {

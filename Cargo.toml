@@ -22,7 +22,7 @@ debug = true
 chrono = "0.4.41"
 chrono-tz = "0.10.3"
 clap = { version = "4.5.41", features = ["derive"] }
-clap_complete = "4.5.55"
+clap_complete = { version = "4.5.55", features = ["unstable-dynamic"] }
 iana-time-zone = "0.1.63"
 #egui = "0.24.1"
 #egui_tiles = "0.4.0"
