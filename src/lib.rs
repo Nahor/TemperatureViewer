@@ -4,9 +4,9 @@ mod data;
 mod error;
 mod line_parser;
 
-use chrono::prelude::DateTime;
 pub use data::*;
 pub use error::{FromSource, SensorError};
+use jiff::{SignedDuration, Timestamp, tz::TimeZone};
 use line_parser::parse_line;
 
 #[cfg(feature = "mmap")]
@@ -14,11 +14,9 @@ use memmap2::MmapOptions;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use std::{
-    fmt::Display,
     fs::{self},
     io::{Cursor, Read},
     path::PathBuf,
-    str::FromStr,
     time::Instant,
 };
 
@@ -26,8 +24,6 @@ use std::{
 const MIN_PARSE_JOB_SIZE: usize = 16384;
 #[cfg(feature = "rayon")]
 const MIN_DST_JOB_SIZE: usize = MIN_PARSE_JOB_SIZE * 4;
-const SEC_PER_MIN: i64 = 60;
-const DEFAULT_TIMEZONE: &str = "America/Los_Angeles";
 
 fn line_error<E>(lineno: usize, err: E) -> SensorError
 where
@@ -129,14 +125,16 @@ pub fn parse_lines(lines: Vec<&[u8]>, start: Instant) -> Result<Vec<DataPoint>, 
         return Err(SensorError::from("No data"));
     }
 
-    let tz_str = std::env::var("TZ")
+    let tz = std::env::var("TZ")
         .inspect(|tz| println!("Environment timezone: {tz}"))
-        .or_else(|_| iana_time_zone::get_timezone().inspect(|tz| println!("System timezone: {tz}")))
-        .unwrap_or_else(|_| {
-            println!("Default timezone: {DEFAULT_TIMEZONE}");
-            DEFAULT_TIMEZONE.to_owned()
-        });
-    let tz = chrono_tz::Tz::from_str(&tz_str)?;
+        .map_or_else(
+            |_| {
+                let tz = TimeZone::system();
+                println!("System timezone: {}", tz.iana_name().unwrap_or("<unknown>"));
+                Ok(tz)
+            },
+            |tz| TimeZone::get(tz.as_str()),
+        )?;
 
     println!("Load: {:.03?}", (std::time::Instant::now() - start));
     let start = std::time::Instant::now();
@@ -152,7 +150,7 @@ pub fn parse_lines(lines: Vec<&[u8]>, start: Instant) -> Result<Vec<DataPoint>, 
     );
 
     // Second pass converts the date from "fake UTC" to "real UTC" (UTC + TZ)
-    let data = second_pass(data, tz)?;
+    let data = second_pass(data, &tz)?;
     let mid2 = std::time::Instant::now();
     println!(
         "    Second pass: {:.3?} ({:.0} lines/sec)",
@@ -161,7 +159,7 @@ pub fn parse_lines(lines: Vec<&[u8]>, start: Instant) -> Result<Vec<DataPoint>, 
     );
 
     // Third pass check for date continuity (data at 1min interval)
-    let data = third_pass(data)?;
+    let data = third_pass(data, &tz)?;
 
     let end = std::time::Instant::now();
     println!(
@@ -236,7 +234,7 @@ fn first_pass(
         reason = "Rust's try_fold() needs mutability, Rayon's does not"
     )]
     let mut map_iter = iter
-        .map(|line| parse_line(line, as_celsius))
+        .map(|&line| parse_line(line, as_celsius))
         .enumerate()
         .map(|(lineno, data)| {
             // +2 because of the header + we want the line numbers to start at 1
@@ -290,7 +288,7 @@ fn first_pass(
 
 fn second_pass(
     data_in: (Vec<usize>, Vec<DataPoint>),
-    tz: impl chrono::TimeZone + Sync + Display,
+    tz: &TimeZone,
 ) -> Result<(Vec<usize>, Vec<DataPoint>), SensorError> {
     // To resolve the ambiguous dates, combine the data points with one shifted
     // back by 1h, so we have date D and date D-1h. If D-1h is NOT ambiguous,
@@ -317,51 +315,38 @@ fn second_pass(
     let data = iter
         .enumerate()
         .map(|(i, &data)| {
-            let datetime = match tz.from_local_datetime(
-                &chrono::DateTime::from_timestamp(data.minutes as i64 * SEC_PER_MIN, 0)
-                    .map(|d| d.naive_utc())
-                    .ok_or("Invalid timestamp")?,
-            ) {
-                chrono::LocalResult::None => Err(SensorError::from(format!(
-                    "failed to convert date from {tz} to Utc"
-                ))),
-                chrono::LocalResult::Single(date) => Ok(date),
-                chrono::LocalResult::Ambiguous(min, max) => {
-                    if i < SKIP_AMOUNT {
-                        unimplemented!("File can't start when daylight saving ends");
-                    } else {
-                        let data_ago = data_v[i - SKIP_AMOUNT]; // safe since the enumerate value starts after skipping
-                        let datetime_ago = tz.from_local_datetime(
-                            &chrono::DateTime::from_timestamp(
-                                data_ago.minutes as i64 * SEC_PER_MIN,
-                                0,
-                            )
-                            .map(|d| d.naive_utc())
-                            .ok_or("Invalid timestamp")?,
-                        );
-                        match datetime_ago {
-                            // If `data.datetime` is ambiguous, we are switching from
-                            // DST to STD. If so, date_ago can't be switching from STD
-                            // to DST, which is the only normal way to get a gap,
-                            // unless we have a huge gap in the original data.
-                            chrono::LocalResult::None => Err(SensorError::from("missing data")),
-                            chrono::LocalResult::Single(_) => Ok(min),
-                            chrono::LocalResult::Ambiguous(_, _) => Ok(max),
-                        }
-                    }
+            let datetime_now = DATAPOINT_EPOCH + SignedDuration::from_mins(data.minutes as i64);
+            let ambiguous_now = tz.to_ambiguous_timestamp(datetime_now);
+            let timestamp = if !ambiguous_now.is_ambiguous() {
+                ambiguous_now.unambiguous()
+            } else if i < SKIP_AMOUNT {
+                unimplemented!("File can't start when daylight saving ends");
+            } else {
+                let data_ago = data_v[i - SKIP_AMOUNT];
+                let datetime_ago =
+                    DATAPOINT_EPOCH + SignedDuration::from_mins(data_ago.minutes as i64);
+                let ambiguous_ago = tz.to_ambiguous_timestamp(datetime_ago);
+                if ambiguous_ago.is_ambiguous() {
+                    ambiguous_now.later()
+                } else {
+                    ambiguous_now.earlier()
                 }
-            }
-            .map_err(|err| line_error(lineno[i], err))?;
+            };
+            let timestamp = timestamp.map_err(|err| line_error(lineno[i], err))?;
             Ok::<DataPoint, SensorError>(DataPoint {
-                minutes: (datetime.with_timezone(&chrono::Utc).timestamp() / SEC_PER_MIN) as i32,
+                minutes: timestamp.as_duration().as_mins() as i32,
                 ..data
             })
+            // Ok::<DataPoint, SensorError>(data)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((lineno, data))
 }
 
-fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, SensorError> {
+fn third_pass(
+    vec_data: (Vec<usize>, Vec<DataPoint>),
+    tz: &TimeZone,
+) -> Result<Vec<DataPoint>, SensorError> {
     vec_data
         .1
         .windows(2)
@@ -371,8 +356,12 @@ fn third_pass(vec_data: (Vec<usize>, Vec<DataPoint>)) -> Result<Vec<DataPoint>, 
                 return Err(SensorError::from(format!(
                     "missing data before line {}, change from {} to {}",
                     vec_data.0[i + 1],
-                    DateTime::from_timestamp(data[0].minutes as i64 * SEC_PER_MIN, 0).unwrap(),
-                    DateTime::from_timestamp(data[1].minutes as i64 * SEC_PER_MIN, 0).unwrap(),
+                    Timestamp::from_duration(SignedDuration::from_mins(data[0].minutes as i64))
+                        .unwrap()
+                        .to_zoned(tz.clone()),
+                    Timestamp::from_duration(SignedDuration::from_mins(data[1].minutes as i64))
+                        .unwrap()
+                        .to_zoned(tz.clone()),
                 )));
             }
             Ok(())

@@ -3,14 +3,16 @@
 use std::{
     error::Error,
     io::{BufWriter, Write},
+    ops::Add,
     sync::{Arc, Condvar, Mutex, mpsc},
     time::{Duration, Instant},
     vec,
 };
 
-use chrono::{TimeDelta, TimeZone};
+use jiff::{SignedDuration, tz::TimeZone};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use sensor::DATAPOINT_EPOCH;
 
 const LINE_LEN: usize = r#""9999-99-99 99:99","20.0000","20.0000"."#.len();
 const HEADER: &str = concat!(
@@ -160,6 +162,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Gate to block the thread from sending their result out of order
     let gate = Arc::new((Mutex::new(0), Condvar::new()));
 
+    // By hardcoding the timezone, we get a significant speed boost because
+    // cloning is much cheaper than when using a dynamic timezone.
+    // (this is because it removes the need for an `Arc<...>`, which is very
+    // costly here, which I assume is because the app creates a lot of
+    // contention on the Arc's atomic counter)
+    static TZ: TimeZone = jiff::tz::get!("America/Los_Angeles");
+    let tz = TZ.clone();
+    //let tz = TimeZone::try_system().unwrap_or_else(|_| TZ.clone());
+    //let tz = TimeZone::get("America/Los_Angeles").unwrap();
+
     let worker = move || {
         #[cfg(feature = "rayon")]
         // Use par_bridge which forces processing each chunk in sequence,
@@ -174,11 +186,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             let end = (start + CHUNK_SIZE).min(count);
             let chunk: String = (start..end)
                 .map(|i| {
-                    let d = chrono_tz::America::Los_Angeles
-                        .with_ymd_and_hms(2000, 1, 1, 0, 0, 0)
+                    let d = DATAPOINT_EPOCH
+                        .to_zoned(tz.clone())
                         .unwrap()
-                        + TimeDelta::minutes(i as i64);
-                    d.format(concat!(r#""%Y-%m-%d %H:%M","20.0000","20.0000""#, "\n"))
+                        .add(SignedDuration::from_mins(i as i64));
+                    d.strftime(concat!(r#""%Y-%m-%d %H:%M","20.0000","20.0000""#, "\n"))
                         .to_string()
                 })
                 .collect();

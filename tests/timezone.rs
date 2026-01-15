@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use chrono::TimeZone;
+use jiff::{Timestamp, tz::TimeZone};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -20,6 +20,7 @@ fn test() {
     let start = std::time::Instant::now();
     let mut count: i64 = 0;
 
+    let tz = TimeZone::get("America/Los_Angeles").unwrap();
     while (std::time::Instant::now() - start) < RUN_DURATION {
         #[cfg(feature = "rayon")]
         let iter = (0..100_000).into_par_iter();
@@ -27,10 +28,9 @@ fn test() {
         let iter = (0..100_000).into_iter();
         count += iter
             .map(|acc| {
-                let d = chrono::DateTime::from_timestamp(acc, 0)
-                    .map(|d| d.naive_utc())
-                    .unwrap_or_else(|| panic!("Failed with {acc}"));
-                chrono_tz::America::Los_Angeles.from_local_datetime(&d);
+                Timestamp::new(acc, 0)
+                    .unwrap_or_else(|err| panic!("Failed with {acc}: {err}"))
+                    .to_zoned(tz.clone());
                 1
             })
             .sum::<i64>();

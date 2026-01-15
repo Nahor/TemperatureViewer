@@ -7,6 +7,7 @@ use std::num::ParseFloatError;
 use std::str::Utf8Error;
 use std::sync::Arc;
 
+use winnow::BStr;
 use winnow::error::ContextError;
 
 #[derive(Debug, Clone)]
@@ -14,8 +15,8 @@ pub(crate) enum ErrorKind {
     None,
     Io(Arc<io::Error>),
     ParseFloatError(ParseFloatError),
-    ChronoParseError(chrono::ParseError),
-    ChronoTzParseError(chrono_tz::ParseError),
+    ChronoParseError(jiff::Error),
+    ChronoTzParseError(jiff::Error),
     Utf8(Utf8Error),
     WinnowError(String),
 }
@@ -119,8 +120,17 @@ impl From<winnow::error::ParseError<&[u8], ContextError>> for SensorError {
     }
 }
 
-impl From<chrono_tz::ParseError> for SensorError {
-    fn from(source: chrono_tz::ParseError) -> Self {
+impl From<winnow::error::ParseError<&BStr, ContextError>> for SensorError {
+    fn from(value: winnow::error::ParseError<&BStr, ContextError>) -> Self {
+        Self {
+            desc: None,
+            source: ErrorKind::WinnowError(format!("{value:?}").to_string()),
+        }
+    }
+}
+
+impl From<jiff::Error> for SensorError {
+    fn from(source: jiff::Error) -> Self {
         Self {
             desc: None,
             source: ErrorKind::ChronoTzParseError(source),
@@ -137,8 +147,8 @@ impl<S: ToString> FromSource<S, ParseFloatError> for SensorError {
     }
 }
 
-impl<S: ToString> FromSource<S, chrono::ParseError> for SensorError {
-    fn from_source(desc: S, source: chrono::ParseError) -> SensorError {
+impl<S: ToString> FromSource<S, jiff::Error> for SensorError {
+    fn from_source(desc: S, source: jiff::Error) -> SensorError {
         Self {
             desc: Some(desc.to_string()),
             source: ErrorKind::ChronoParseError(source),

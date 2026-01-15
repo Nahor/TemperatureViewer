@@ -1,5 +1,7 @@
 // spell-checker:words chrono datetime
 
+use jiff::civil::{DateTime, datetime};
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Celsius(f32);
 impl Celsius {
@@ -32,6 +34,8 @@ impl From<Fahrenheit> for Celsius {
         Celsius((value.0 - 32.0) * 5.0 / 9.0)
     }
 }
+
+pub const DATAPOINT_EPOCH: DateTime = datetime(2000, 1, 1, 0, 0, 0, 0);
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct DataPoint {
