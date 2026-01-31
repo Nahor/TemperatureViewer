@@ -8,7 +8,7 @@ use std::{
     vec,
 };
 
-use chrono::DateTime;
+use chrono::{TimeDelta, TimeZone};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -174,8 +174,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             let end = (start + CHUNK_SIZE).min(count);
             let chunk: String = (start..end)
                 .map(|i| {
-                    let d = DateTime::from_timestamp(i as i64 * 60, 0).unwrap();
-                    let d = d.with_timezone(&chrono_tz::America::Los_Angeles);
+                    let d = chrono_tz::America::Los_Angeles
+                        .with_ymd_and_hms(2000, 1, 1, 0, 0, 0)
+                        .unwrap()
+                        + TimeDelta::minutes(i as i64);
                     d.format(concat!(r#""%Y-%m-%d %H:%M","20.0000","20.0000""#, "\n"))
                         .to_string()
                 })
