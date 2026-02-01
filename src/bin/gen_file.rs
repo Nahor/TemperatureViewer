@@ -145,8 +145,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let file = std::fs::File::create(path)?;
-    // Set the size so the filesystem can preallocate
-    file.set_len(expected_size as u64)?;
+    // Set the size so the filesystem can preallocate (it's ok if this fails,
+    // some file cannot be resize, e.g. NUL on Windows and /dev/null on Unix)
+    let _ = file.set_len(expected_size as u64);
 
     let mut file = BufWriter::with_capacity(1024 * 1024, file);
     file.write_all(HEADER.as_bytes())?;
