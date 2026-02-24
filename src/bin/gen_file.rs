@@ -13,6 +13,9 @@ use jiff::{SignedDuration, tz::TimeZone};
 use rayon::prelude::*;
 use sensor::DATAPOINT_EPOCH;
 
+#[allow(unused)]
+const MAX_THREADS: usize = usize::MAX;
+
 const LINE_LEN: usize = r#""9999-99-99 99:99","20.0000","20.0000"."#.len();
 const HEADER: &str = concat!(
     r#""Timestamp","Temperature (°F)","Relative Humidity (%)""#,
@@ -156,8 +159,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     const CHUNK_SIZE: usize = 10000;
     let range = 0..(count.div_ceil(CHUNK_SIZE));
 
+    #[cfg(feature = "rayon")]
+    let num_threads = {
+        let num_threads = std::thread::available_parallelism()
+            .map_or(8, |c| c.get())
+            .min(MAX_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build_global()
+            .unwrap();
+        num_threads
+    };
+    #[cfg(not(feature = "rayon"))]
+    let num_threads = 1;
+
     // Channel with enough capacity to hold an item from each thread
-    let (tx, rx) = mpsc::sync_channel(std::thread::available_parallelism().map_or(8, |n| n.get()));
+    let (tx, rx) = mpsc::sync_channel(num_threads);
 
     // Gate to block the thread from sending their result out of order
     let gate = Arc::new((Mutex::new(0), Condvar::new()));
