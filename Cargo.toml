@@ -21,7 +21,7 @@ debug = true
 [dependencies]
 # chrono = "0.4.41"
 # chrono-tz = "0.10.3"
-jiff = { version = "0.2.18", features = ["static"] }
+jiff = { version = "0.2.21", features = ["static"] }
 clap = { version = "4.5.56", features = ["derive"] }
 clap_complete = "4.5.65"
 iana-time-zone = "0.1.65"

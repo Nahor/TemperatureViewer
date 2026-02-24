@@ -3,7 +3,6 @@
 use std::{
     error::Error,
     io::{BufWriter, Write},
-    ops::Add,
     sync::{Arc, Condvar, Mutex, mpsc},
     time::{Duration, Instant},
     vec,
@@ -163,15 +162,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Gate to block the thread from sending their result out of order
     let gate = Arc::new((Mutex::new(0), Condvar::new()));
 
-    // By hardcoding the timezone, we get a significant speed boost because
-    // cloning is much cheaper than when using a dynamic timezone.
-    // (this is because it removes the need for an `Arc<...>`, which is very
-    // costly here, which I assume is because the app creates a lot of
-    // contention on the Arc's atomic counter)
     static TZ: TimeZone = jiff::tz::get!("America/Los_Angeles");
-    let tz = TZ.clone();
-    //let tz = TimeZone::try_system().unwrap_or_else(|_| TZ.clone());
-    //let tz = TimeZone::get("America/Los_Angeles").unwrap();
+    let tz = TimeZone::try_system().unwrap_or_else(|_| TZ.clone());
+
+    let epoch = DATAPOINT_EPOCH.to_zoned(tz.clone()).unwrap();
 
     let worker = move || {
         #[cfg(feature = "rayon")]
@@ -185,16 +179,33 @@ fn main() -> Result<(), Box<dyn Error>> {
             // The job
             let start = (i * CHUNK_SIZE).min(count);
             let end = (start + CHUNK_SIZE).min(count);
-            let chunk: String = (start..end)
-                .map(|i| {
-                    let d = DATAPOINT_EPOCH
-                        .to_zoned(tz.clone())
-                        .unwrap()
-                        .add(SignedDuration::from_mins(i as i64));
-                    d.strftime(concat!(r#""%Y-%m-%d %H:%M","20.0000","20.0000""#, "\n"))
-                        .to_string()
+
+            let start_date = epoch.clone() + SignedDuration::from_mins(start as i64);
+
+            let chunk = (0..(end - start))
+                .scan(start_date, |date, _| {
+                    // Convert to civil time to remove the timezone, thus
+                    // preventing `strftime` from cloning it (when `TimeZone` is
+                    // backed by an `Arc`, cloning gets expensive fast in
+                    // multithreaded environment because of contention on the
+                    // Arc's atomic ref-counter)
+                    let civil = date.datetime();
+
+                    let mut str = [0_u8; LINE_LEN];
+                    let _ = write!(
+                        &mut str[..],
+                        "{}",
+                        civil.strftime(concat!(r#""%Y-%m-%d %H:%M","20.0000","20.0000""#, "\n"))
+                    );
+
+                    *date += SignedDuration::from_mins(1);
+
+                    Some(str)
                 })
-                .collect();
+                .fold(Vec::with_capacity(CHUNK_SIZE * LINE_LEN), |mut vec, str| {
+                    vec.extend_from_slice(&str);
+                    vec
+                });
 
             (i, chunk)
         })
@@ -217,7 +228,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut progress = Progress::new(count, 50);
         receive(rx, |value| {
             progress.inc(CHUNK_SIZE);
-            file.write_all(value.as_bytes()).unwrap();
+            file.write_all(&value).unwrap();
         });
         file.flush().unwrap();
 
