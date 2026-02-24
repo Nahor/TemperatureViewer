@@ -6,14 +6,11 @@ use std::{
     sync::{Arc, Condvar, Mutex, mpsc},
 };
 
+use indicatif::{HumanBytes, ProgressBar, ProgressStyle};
 use jiff::{SignedDuration, tz::TimeZone};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use sensor::DATAPOINT_EPOCH;
-
-use crate::progress::Progress;
-
-mod progress;
 
 #[allow(unused)]
 const MAX_THREADS: usize = usize::MAX;
@@ -25,22 +22,6 @@ const HEADER: &str = concat!(
 );
 const HEADER_LEN: usize = HEADER.len();
 
-fn size_format(v: usize) -> String {
-    const KB: f32 = 1024_f32;
-    const MB: f32 = 1024_f32 * KB;
-    const GB: f32 = 1024_f32 * MB;
-    let v = v as f32;
-    if v > GB {
-        format!("{v:.2}GB", v = v / GB)
-    } else if v > MB {
-        format!("{v:.2}MB", v = v / MB)
-    } else if v > KB {
-        format!("{v:.2}KB", v = v / KB)
-    } else {
-        format!("{v}B")
-    }
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     let count: usize = std::env::args()
         .nth(1)
@@ -50,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args().nth(2).unwrap_or("./test.csv".to_owned());
     println!(
         "Generating {count} entries in '{path}' ({} - {expected_size} bytes)",
-        size_format(expected_size)
+        HumanBytes(expected_size as u64)
     );
 
     let file = std::fs::File::create(path)?;
@@ -149,9 +130,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let receiver = move || {
-        let mut progress = Progress::new(count, 50);
+        let progress = ProgressBar::new(count as u64);
+        progress.set_style(
+            ProgressStyle::with_template(
+                "[{elapsed_precise}] [{wide_bar}] {percent}% [{eta_precise}]",
+            )
+            .unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏ "),
+        );
         receive(rx, |value| {
-            progress.inc(CHUNK_SIZE);
+            progress.inc(CHUNK_SIZE as u64);
             file.write_all(&value).unwrap();
         });
         file.flush().unwrap();
