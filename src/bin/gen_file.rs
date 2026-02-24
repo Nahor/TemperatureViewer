@@ -238,6 +238,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Start a thread to manage the jobs (need a thread so that we can try
     // to read the results while the jobs are being generated)
+    let start = std::time::Instant::now();
     std::thread::scope(|s| {
         s.spawn(move || {
             worker();
@@ -247,6 +248,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             receiver();
         });
     });
+    let elapsed = start.elapsed();
+    println!("time: {:.2?}", elapsed,);
+    println!(
+        "speed: {} line/s",
+        (count as f32 / elapsed.as_secs_f32()).round()
+    );
 
     Ok(())
 }
