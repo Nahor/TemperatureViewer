@@ -11,7 +11,7 @@ pub(crate) struct Progress {
     mapped_progress: usize,
 
     start: Instant,
-    last_update: Instant,
+    next_update: Instant,
     speed: Option<f64>,
 }
 
@@ -27,7 +27,7 @@ impl Progress {
             mapped_progress: 0,
 
             start: Instant::now(),
-            last_update: Instant::now() - Duration::from_secs(1),
+            next_update: Instant::now(),
             speed: None,
         }
     }
@@ -50,12 +50,10 @@ impl Progress {
 
         // Skip the refresh if there is no visible progress and not enough time has passed
         let time = Instant::now();
-        if (time < self.last_update + Duration::from_millis(100))
-            && (progress == self.mapped_progress)
-        {
+        if (time < self.next_update) && (progress == self.mapped_progress) {
             return;
         }
-        self.last_update = time;
+        self.next_update = time + Duration::from_millis(100);
         self.mapped_progress = progress;
 
         // Generate the progress bar
