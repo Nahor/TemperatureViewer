@@ -41,6 +41,22 @@ fn size_format(v: usize) -> String {
     }
 }
 
+fn get_output(path: &str, expected_size: usize) -> Result<Box<dyn std::io::Write>, std::io::Error> {
+    let file: Box<dyn Write> = if path == "-" {
+        Box::new(std::io::stdout())
+    } else {
+        let file = std::fs::File::create(path)?;
+        // Set the size so the filesystem can preallocate (it's ok if this fails,
+        // some file cannot be resize, e.g. NUL on Windows and /dev/null on Unix)
+        let _ = file.set_len(expected_size as u64);
+
+        let file = BufWriter::with_capacity(1024 * 1024, file);
+        Box::new(file)
+    };
+
+    Ok(file)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let count: usize = std::env::args()
         .nth(1)
@@ -48,18 +64,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap_or(Ok(10))?;
     let expected_size = HEADER_LEN + count * LINE_LEN;
     let path = std::env::args().nth(2).unwrap_or("./test.csv".to_owned());
-    println!(
-        "Generating {count} entries in '{path}' ({} - {expected_size} bytes)",
-        size_format(expected_size)
+
+    static TZ: TimeZone = jiff::tz::get!("America/Los_Angeles");
+    let tz = TimeZone::try_system().unwrap_or_else(|_| TZ.clone());
+
+    eprintln!(
+        "Generating {count} entries in '{path}' ({} - {expected_size} bytes) [TZ: {}]",
+        size_format(expected_size),
+        tz.iana_name().unwrap_or("Unknown")
     );
-
-    let file = std::fs::File::create(path)?;
-    // Set the size so the filesystem can preallocate (it's ok if this fails,
-    // some file cannot be resize, e.g. NUL on Windows and /dev/null on Unix)
-    let _ = file.set_len(expected_size as u64);
-
-    let mut file = BufWriter::with_capacity(1024 * 1024, file);
-    file.write_all(HEADER.as_bytes())?;
 
     // Split into chunks to avoid one job per line and avoid needless refresh
     // of the display
@@ -85,9 +98,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Gate to block the thread from sending their result out of order
     let gate = Arc::new((Mutex::new(0), Condvar::new()));
-
-    static TZ: TimeZone = jiff::tz::get!("America/Los_Angeles");
-    let tz = TimeZone::try_system().unwrap_or_else(|_| TZ.clone());
 
     let epoch = DATAPOINT_EPOCH.to_zoned(tz.clone()).unwrap();
 
@@ -149,6 +159,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let receiver = move || {
+        let mut file = get_output(&path, expected_size).unwrap();
+        file.write_all(HEADER.as_bytes()).unwrap();
+
         let mut progress = Progress::new(count, 50);
         receive(rx, |value| {
             progress.inc(CHUNK_SIZE);
@@ -172,8 +185,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
     });
     let elapsed = start.elapsed();
-    println!("time: {:.2?}", elapsed,);
-    println!(
+    eprintln!("time: {:.2?}", elapsed,);
+    eprintln!(
         "speed: {} line/s",
         (count as f32 / elapsed.as_secs_f32()).round()
     );
