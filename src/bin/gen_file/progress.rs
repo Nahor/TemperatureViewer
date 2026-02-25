@@ -40,7 +40,12 @@ impl Progress {
         self.draw();
     }
     pub(crate) fn finish(&mut self) {
+        // Force the value to ensure we don't finish on "99%"
         self.value = self.max_value;
+        // Force the speed in case we finished quickly and the ETA is still "unk"
+        self.speed = Some(1.0);
+        // Force a display update because of the changes above
+        self.next_update = Instant::now();
         self.draw();
     }
 
