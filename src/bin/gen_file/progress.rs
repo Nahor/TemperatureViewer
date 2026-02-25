@@ -13,6 +13,9 @@ pub(crate) struct Progress {
     start: Instant,
     next_update: Instant,
     speed: Option<f64>,
+
+    // Pre-allocated output buffer
+    out: Vec<u8>,
 }
 
 impl Progress {
@@ -29,6 +32,11 @@ impl Progress {
             start: Instant::now(),
             next_update: Instant::now(),
             speed: None,
+
+            // PROGRESS_CHARS is 3-bytes per char
+            // 50 is buffer for all the other stuff (elapsed time, percent, eta,
+            // ...) which should be ~24 bytes currently
+            out: Vec::with_capacity(50 + 3 * width),
         }
     }
     pub(crate) fn inc(&mut self, inc: usize) {
@@ -47,6 +55,7 @@ impl Progress {
         // Force a display update because of the changes above
         self.next_update = Instant::now();
         self.draw();
+        eprintln!();
     }
 
     fn draw(&mut self) {
@@ -90,15 +99,17 @@ impl Progress {
             None => "unk".to_owned(),
         };
 
-        print!(
-            //"\r[{:>2}:{:02}] [{:░<50}] {:>3}% ({})",
+        self.out.clear();
+        write!(
+            &mut self.out,
             "\r[{:>2}:{:02}] [{: <50}] {:>3}% ({})",
             elapsed as usize / 60,
             elapsed as usize % 60,
             progress_str,
             self.value * 100 / self.max_value,
             eta
-        );
-        std::io::stdout().flush().unwrap();
+        )
+        .unwrap();
+        std::io::stderr().write_all(&self.out).unwrap();
     }
 }

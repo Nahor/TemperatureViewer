@@ -157,7 +157,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         file.flush().unwrap();
 
         progress.finish();
-        println!();
     };
 
     // Start a thread to manage the jobs (need a thread so that we can try
